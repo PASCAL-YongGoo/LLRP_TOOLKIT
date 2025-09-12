@@ -260,17 +260,30 @@ class AddROSpec(LLRPMessage):
 
 @dataclass
 class AddROSpecResponse(LLRPMessage):
-    """ADD_ROSPEC_RESPONSE Message"""
+    """ADD_ROSPEC_RESPONSE Message
+    Message Type 30: LLRPStatus Parameter"""
     
     def __init__(self, msg_id: int = 0):
         super().__init__(MessageType.ADD_ROSPEC_RESPONSE, msg_id)
         self.llrp_status = None
     
     def decode_parameters(self, data: bytes):
-        # Decode LLRPStatus
-        if len(data) >= 8:
-            self.llrp_status = LLRPStatus()
-            self.llrp_status.decode(data)
+        """Decode LLRPStatus parameter"""
+        from .protocol import LLRPParameter, LLRPStatus
+        
+        offset = 0
+        while offset < len(data):
+            param_type, param_length, header_len, is_tv = LLRPParameter.parse_header(data, offset)
+            
+            if param_type is None:
+                break
+                
+            if param_type == 287:  # LLRPStatus
+                self.llrp_status = LLRPStatus()
+                consumed = self.llrp_status.decode(data[offset:offset+param_length])
+                offset += consumed
+            else:
+                offset += param_length
 
 
 @dataclass
@@ -370,6 +383,53 @@ class StopROSpecResponse(LLRPMessage):
 
 
 @dataclass
+class DisableROSpec(LLRPMessage):
+    """DISABLE_ROSPEC Message
+    Message Type 25: ROSpecID(32)"""
+    
+    def __init__(self, msg_id: int = 0, rospec_id: int = 0):
+        super().__init__(MessageType.DISABLE_ROSPEC, msg_id)
+        self.rospec_id = rospec_id
+    
+    def encode(self) -> bytes:
+        data = struct.pack('!I', self.rospec_id)
+        self.header.message_length = 14  # 10 header + 4 bytes
+        return self.header.pack() + data
+    
+    def decode_parameters(self, data: bytes):
+        if len(data) >= 4:
+            self.rospec_id = struct.unpack('!I', data[:4])[0]
+
+
+@dataclass
+class DisableROSpecResponse(LLRPMessage):
+    """DISABLE_ROSPEC_RESPONSE Message
+    Message Type 35: LLRPStatus Parameter"""
+    
+    def __init__(self, msg_id: int = 0):
+        super().__init__(MessageType.DISABLE_ROSPEC_RESPONSE, msg_id)
+        self.llrp_status = None
+    
+    def decode_parameters(self, data: bytes):
+        """Decode LLRPStatus parameter"""
+        from .protocol import LLRPParameter, LLRPStatus
+        
+        offset = 0
+        while offset < len(data):
+            param_type, param_length, header_len, is_tv = LLRPParameter.parse_header(data, offset)
+            
+            if param_type is None:
+                break
+                
+            if param_type == 287:  # LLRPStatus
+                self.llrp_status = LLRPStatus()
+                consumed = self.llrp_status.decode(data[offset:offset+param_length])
+                offset += consumed
+            else:
+                offset += param_length
+
+
+@dataclass
 class DeleteROSpec(LLRPMessage):
     """DELETE_ROSPEC Message"""
     
@@ -399,6 +459,61 @@ class DeleteROSpecResponse(LLRPMessage):
         if len(data) >= 8:
             self.llrp_status = LLRPStatus()
             self.llrp_status.decode(data)
+
+
+@dataclass
+class GetROSpec(LLRPMessage):
+    """GET_ROSPEC Message - Get specific ROSpec from reader
+    Message Type 26: ROSpecID(32)"""
+    
+    def __init__(self, msg_id: int = 0, rospec_id: int = 0):
+        super().__init__(MessageType.GET_ROSPEC, msg_id)
+        self.rospec_id = rospec_id
+    
+    def encode(self) -> bytes:
+        data = struct.pack('!I', self.rospec_id)
+        self.header.message_length = 14  # 10 header + 4 bytes
+        return self.header.pack() + data
+    
+    def decode_parameters(self, data: bytes):
+        if len(data) >= 4:
+            self.rospec_id = struct.unpack('!I', data[:4])[0]
+
+
+@dataclass
+class GetROSpecResponse(LLRPMessage):
+    """GET_ROSPEC_RESPONSE Message
+    Message Type 36: LLRPStatus Parameter + ROSpec Parameter (0-n)"""
+    
+    def __init__(self, msg_id: int = 0):
+        super().__init__(MessageType.GET_ROSPEC_RESPONSE, msg_id)
+        self.llrp_status = None
+        self.rospecs = []  # List of ROSpec parameters
+    
+    def decode_parameters(self, data: bytes):
+        """Decode response parameters"""
+        from .protocol import LLRPParameter, LLRPStatus
+        
+        offset = 0
+        while offset < len(data):
+            param_type, param_length, header_len, is_tv = LLRPParameter.parse_header(data, offset)
+            
+            if param_type is None:
+                break
+            
+            param_data = data[offset:offset+param_length]
+            
+            if param_type == 287:  # LLRPStatus
+                self.llrp_status = LLRPStatus()
+                consumed = self.llrp_status.decode(param_data)
+            elif param_type == ParameterType.ROSPEC:
+                rospec = ROSpec()
+                consumed = rospec.decode(param_data) if hasattr(rospec, 'decode') else param_length
+                self.rospecs.append(rospec)
+            else:
+                consumed = param_length
+            
+            offset += consumed
 
 
 # Tag Report Messages  
@@ -524,13 +639,73 @@ class TagReportData(LLRPParameter):
         return self.last_seen_timestamp_utc or self.last_seen_timestamp_uptime
 
 
+@dataclass  
+class RFSurveyReportData(LLRPParameter):
+    """RF Survey Report Data Parameter - RF Survey reporting"""
+    
+    def __init__(self):
+        super().__init__(ParameterType.RF_SURVEY_REPORT_DATA)
+        # RF survey specific fields
+        self.rospec_id = None
+        self.spec_index = None
+        self.antenna_id = None
+        self.peak_rssi = None
+        self.frequency = None
+        self.timestamp = None
+        
+    def decode(self, data: bytes) -> int:
+        """Decode RF survey report data"""
+        from .protocol import LLRPParameter
+        
+        if len(data) < 4:
+            return 0
+            
+        # Parse header
+        param_type, total_length, header_len, is_tv = LLRPParameter.parse_header(data)
+        if param_type != ParameterType.RF_SURVEY_REPORT_DATA:
+            return 0
+            
+        offset = header_len  # Start after header
+        
+        # Parse sub-parameters (similar to TagReportData)
+        while offset < total_length:
+            if offset + 4 > len(data):
+                break
+                
+            subparam_type, subparam_len, sub_header_len, is_tv = LLRPParameter.parse_header(data, offset)
+            
+            if subparam_type is None or offset + subparam_len > total_length:
+                break
+                
+            # Parse known sub-parameters
+            if subparam_type == ParameterType.ROSPEC_ID:
+                if subparam_len >= 8:
+                    self.rospec_id = struct.unpack('!I', data[offset+4:offset+8])[0]
+            elif subparam_type == ParameterType.SPEC_INDEX:
+                if subparam_len >= 6:
+                    self.spec_index = struct.unpack('!H', data[offset+4:offset+6])[0]
+            elif subparam_type == ParameterType.ANTENNA_ID:
+                if subparam_len >= 6:
+                    self.antenna_id = struct.unpack('!H', data[offset+4:offset+6])[0]
+            elif subparam_type == ParameterType.PEAK_RSSI:
+                if subparam_len >= 5:
+                    self.peak_rssi = struct.unpack('!b', data[offset+4:offset+5])[0]
+                    
+            offset += subparam_len
+            
+        return total_length
+
+
 @dataclass
 class ROAccessReport(LLRPMessage):
-    """RO_ACCESS_REPORT Message - Complete Implementation"""
+    """RO_ACCESS_REPORT Message - Complete Implementation
+    Message Type 61: TagReportData Parameter (0-n) + RFSurveyReportData Parameter (0-n) + Custom Parameter (0-n)"""
     
     def __init__(self, msg_id: int = 0):
         super().__init__(MessageType.RO_ACCESS_REPORT, msg_id)
         self.tag_report_data: List[TagReportData] = []
+        self.rf_survey_report_data: List[RFSurveyReportData] = []
+        self.custom_parameters: List = []
     
     def decode_parameters(self, data: bytes):
         """Decode tag reports with robust parsing"""
@@ -570,8 +745,23 @@ class ROAccessReport(LLRPMessage):
                         offset += consumed
                     else:
                         offset += param_len
+                # Parse RFSurveyReportData parameters
+                elif param_type == ParameterType.RF_SURVEY_REPORT_DATA:
+                    rf_survey_data = RFSurveyReportData()
+                    consumed = rf_survey_data.decode(data[offset:offset+param_len])
+                    if consumed > 0:
+                        self.rf_survey_report_data.append(rf_survey_data)
+                        offset += consumed
+                    else:
+                        offset += param_len
                 else:
-                    # Skip unknown parameters
+                    # Store unknown/custom parameters
+                    custom_param = {
+                        'type': param_type,
+                        'length': param_len,
+                        'data': data[offset:offset+param_len]
+                    }
+                    self.custom_parameters.append(custom_param)
                     offset += param_len
                     
             except Exception as e:
@@ -596,11 +786,25 @@ class ROAccessReport(LLRPMessage):
         """Get tag reports from specific antenna"""
         return [tag for tag in self.tag_report_data 
                 if tag.antenna_id == antenna_id]
+    
+    def get_rf_survey_count(self) -> int:
+        """Get total number of RF survey reports"""
+        return len(self.rf_survey_report_data)
+    
+    def get_rf_surveys_by_antenna(self, antenna_id: int) -> List[RFSurveyReportData]:
+        """Get RF survey reports from specific antenna"""
+        return [survey for survey in self.rf_survey_report_data 
+                if survey.antenna_id == antenna_id]
+    
+    def get_custom_parameter_count(self) -> int:
+        """Get total number of custom parameters"""
+        return len(self.custom_parameters)
 
 
 @dataclass
 class ErrorMessage(LLRPMessage):
-    """ERROR_MESSAGE - Sent when reader encounters an error"""
+    """ERROR_MESSAGE - Sent when reader encounters an error
+    Message Type 100: LLRPStatus Parameter"""
     
     def __init__(self, msg_id: int = 0):
         super().__init__(MessageType.ERROR_MESSAGE, msg_id)
@@ -700,11 +904,49 @@ class CloseConnectionResponse(LLRPMessage):
                 offset += param_length
 
 
+@dataclass
+class GetReport(LLRPMessage):
+    """GET_REPORT Message - Request immediate tag reports"""
+    
+    def __init__(self, msg_id: int = 0):
+        super().__init__(MessageType.GET_REPORT, msg_id)
+    
+    def decode_parameters(self, data: bytes):
+        """GET_REPORT has no parameters"""
+        pass
+
+
+@dataclass
+class CustomMessage(LLRPMessage):
+    """CUSTOM_MESSAGE - For vendor extensions"""
+    
+    def __init__(self, msg_id: int = 0, vendor_id: int = 0, 
+                 message_subtype: int = 0, custom_data: bytes = b''):
+        super().__init__(MessageType.CUSTOM_MESSAGE, msg_id)
+        self.vendor_id = vendor_id
+        self.message_subtype = message_subtype
+        self.custom_data = custom_data
+    
+    def encode(self) -> bytes:
+        """Encode custom message"""
+        data = struct.pack('!II', self.vendor_id, self.message_subtype)
+        data += self.custom_data
+        self.header.message_length = 10 + len(data)
+        return self.header.pack() + data
+    
+    def decode_parameters(self, data: bytes):
+        """Decode custom message parameters"""
+        if len(data) >= 8:
+            self.vendor_id, self.message_subtype = struct.unpack('!II', data[:8])
+            self.custom_data = data[8:] if len(data) > 8 else b''
+
+
 # Events and Reports Message
 
 @dataclass
 class EnableEventsAndReports(LLRPMessage):
-    """ENABLE_EVENTS_AND_REPORTS Message - Enable reader event notifications"""
+    """ENABLE_EVENTS_AND_REPORTS Message - Enable reader event notifications
+    Message Type 64: No parameters"""
     
     def __init__(self, msg_id: int = 0):
         super().__init__(MessageType.ENABLE_EVENTS_AND_REPORTS, msg_id)
@@ -818,7 +1060,8 @@ class ReaderEventNotificationData(LLRPParameter):
 
 @dataclass
 class ReaderEventNotification(LLRPMessage):
-    """READER_EVENT_NOTIFICATION Message - Reader event notifications"""
+    """READER_EVENT_NOTIFICATION Message - Reader event notifications
+    Message Type 63: ReaderEventNotificationData Parameter"""
     
     def __init__(self, msg_id: int = 0):
         super().__init__(MessageType.READER_EVENT_NOTIFICATION, msg_id)
@@ -1256,21 +1499,204 @@ class GetAccessSpecsResponse(LLRPMessage):
             offset += consumed
 
 
+# Version Management Messages
+
+@dataclass
+class GetSupportedVersion(LLRPMessage):
+    """GET_SUPPORTED_VERSION Message - Request supported LLRP versions
+    Message Type 46: No parameters in message body"""
+    
+    def __init__(self, msg_id: int = 0):
+        super().__init__(MessageType.GET_SUPPORTED_VERSION, msg_id)
+    
+    def decode_parameters(self, data: bytes):
+        """GET_SUPPORTED_VERSION has no parameters"""
+        pass
+
+
+@dataclass
+class GetSupportedVersionResponse(LLRPMessage):
+    """GET_SUPPORTED_VERSION_RESPONSE Message
+    Message Type 56: CurrentVersion(8) + SupportedVersion(8) + LLRPStatus Parameter"""
+    
+    def __init__(self, msg_id: int = 0):
+        super().__init__(MessageType.GET_SUPPORTED_VERSION_RESPONSE, msg_id)
+        self.current_version = 0x01  # 8-bit current version (4 bits major + 4 bits minor)
+        self.supported_version = 0x01  # 8-bit supported version (4 bits major + 4 bits minor)  
+        self.llrp_status = None
+    
+    def encode(self) -> bytes:
+        """Encode GET_SUPPORTED_VERSION_RESPONSE message"""
+        # CurrentVersion(8) + SupportedVersion(8) 
+        data = struct.pack('!BB', self.current_version, self.supported_version)
+        
+        # Add LLRPStatus parameter
+        if self.llrp_status:
+            data += self.llrp_status.encode()
+            
+        self.header.message_length = 10 + len(data)  # 10-byte header + data
+        return self.header.pack() + data
+    
+    def decode_parameters(self, data: bytes):
+        """Decode supported version response parameters"""
+        from .protocol import LLRPParameter, LLRPStatus
+        
+        if len(data) < 2:
+            return
+            
+        # Parse CurrentVersion(8) + SupportedVersion(8)
+        self.current_version, self.supported_version = struct.unpack('!BB', data[:2])
+        
+        # Parse LLRPStatus parameter if present
+        offset = 2
+        while offset < len(data):
+            param_type, param_length, header_len, is_tv = LLRPParameter.parse_header(data, offset)
+            
+            if param_type is None:
+                break
+            
+            if param_type == 287:  # LLRPStatus
+                self.llrp_status = LLRPStatus()
+                consumed = self.llrp_status.decode(data[offset:offset+param_length])
+                offset += consumed
+            else:
+                offset += param_length
+    
+    def get_current_version_major(self) -> int:
+        """Get major version from current_version field"""
+        return (self.current_version >> 4) & 0x0F
+    
+    def get_current_version_minor(self) -> int:
+        """Get minor version from current_version field"""
+        return self.current_version & 0x0F
+    
+    def get_supported_version_major(self) -> int:
+        """Get major version from supported_version field"""
+        return (self.supported_version >> 4) & 0x0F
+    
+    def get_supported_version_minor(self) -> int:
+        """Get minor version from supported_version field"""
+        return self.supported_version & 0x0F
+    
+    def set_current_version(self, major: int, minor: int):
+        """Set current version (4-bit major + 4-bit minor)"""
+        self.current_version = ((major & 0x0F) << 4) | (minor & 0x0F)
+    
+    def set_supported_version(self, major: int, minor: int):
+        """Set supported version (4-bit major + 4-bit minor)"""
+        self.supported_version = ((major & 0x0F) << 4) | (minor & 0x0F)
+
+
+@dataclass
+class SetProtocolVersion(LLRPMessage):
+    """SET_PROTOCOL_VERSION Message - Set LLRP protocol version
+    Message Type 47: ProtocolVersion(8)"""
+    
+    def __init__(self, msg_id: int = 0, protocol_version: int = 0x11):
+        super().__init__(MessageType.SET_PROTOCOL_VERSION, msg_id)
+        self.protocol_version = protocol_version  # 8-bit (4-bit major + 4-bit minor)
+    
+    def encode(self) -> bytes:
+        """Encode SET_PROTOCOL_VERSION message"""
+        data = struct.pack('!B', self.protocol_version)
+        self.header.message_length = 10 + len(data)  # 10-byte header + 1 byte data
+        return self.header.pack() + data
+    
+    def decode_parameters(self, data: bytes):
+        """Decode SET_PROTOCOL_VERSION parameters"""
+        if len(data) >= 1:
+            self.protocol_version = struct.unpack('!B', data[:1])[0]
+    
+    def set_version(self, major: int, minor: int):
+        """Set protocol version from major/minor components"""
+        self.protocol_version = ((major & 0x0F) << 4) | (minor & 0x0F)
+    
+    def get_version_major(self) -> int:
+        """Get major version from protocol_version field"""
+        return (self.protocol_version >> 4) & 0x0F
+    
+    def get_version_minor(self) -> int:
+        """Get minor version from protocol_version field"""
+        return self.protocol_version & 0x0F
+
+
+@dataclass
+class SetProtocolVersionResponse(LLRPMessage):
+    """SET_PROTOCOL_VERSION_RESPONSE Message
+    Message Type 57: LLRPStatus Parameter"""
+    
+    def __init__(self, msg_id: int = 0):
+        super().__init__(MessageType.SET_PROTOCOL_VERSION_RESPONSE, msg_id)
+        self.llrp_status = None
+    
+    def decode_parameters(self, data: bytes):
+        """Decode response parameters"""
+        from .protocol import LLRPParameter, LLRPStatus
+        
+        offset = 0
+        while offset < len(data):
+            param_type, param_length, header_len, is_tv = LLRPParameter.parse_header(data, offset)
+            
+            if param_type is None:
+                break
+                
+            if param_type == 287:  # LLRPStatus
+                self.llrp_status = LLRPStatus()
+                consumed = self.llrp_status.decode(data[offset:offset+param_length])
+                offset += consumed
+            else:
+                offset += param_length
+
+
 # Reader Configuration Messages
 
 @dataclass
 class GetReaderConfig(LLRPMessage):
-    """GET_READER_CONFIG Message - Request reader configuration"""
+    """GET_READER_CONFIG Message - Request reader configuration
+    Message Type 2: Antenna ID (16) + RequestedData (8) + GPIPortNum (16) + GPOPortNum (16) + Custom Parameter (0-n)"""
     
     def __init__(self, msg_id: int = 0, antenna_id: int = 0, 
-                 requested_configuration: int = 0):
+                 requested_data: int = 0, gpi_port_num: int = 0, gpo_port_num: int = 0):
         super().__init__(MessageType.GET_READER_CONFIG, msg_id)
-        self.antenna_id = antenna_id  # 0 = all antennas
-        self.requested_configuration = requested_configuration  # Bitmask of requested config
+        self.antenna_id = antenna_id  # 16-bit: 0 = all antennas
+        self.requested_data = requested_data  # 8-bit: bitmask of requested config
+        self.gpi_port_num = gpi_port_num  # 16-bit: GPI port number
+        self.gpo_port_num = gpo_port_num  # 16-bit: GPO port number
+        self.custom_parameters = []  # Custom parameters (0-n)
     
     def encode_parameters(self) -> bytes:
         """Encode GET_READER_CONFIG parameters"""
-        return struct.pack('!HH', self.antenna_id, self.requested_configuration)
+        data = struct.pack('!HBxHH', self.antenna_id, self.requested_data, 
+                          self.gpi_port_num, self.gpo_port_num)
+        # Add custom parameters if any
+        for param in self.custom_parameters:
+            if hasattr(param, 'encode'):
+                data += param.encode()
+        return data
+    
+    def decode_parameters(self, data: bytes):
+        """Decode GET_READER_CONFIG parameters"""
+        if len(data) >= 7:  # Minimum size: 16+8+16+16 = 56 bits = 7 bytes
+            self.antenna_id, self.requested_data, self.gpi_port_num, self.gpo_port_num = \
+                struct.unpack('!HBxHH', data[:7])
+            
+            # Parse any remaining custom parameters
+            offset = 7
+            while offset < len(data):
+                from .protocol import LLRPParameter
+                param_type, param_length, header_len, is_tv = LLRPParameter.parse_header(data, offset)
+                
+                if param_type is None or offset + param_length > len(data):
+                    break
+                
+                # Store custom parameters
+                custom_param = {
+                    'type': param_type,
+                    'length': param_length, 
+                    'data': data[offset:offset+param_length]
+                }
+                self.custom_parameters.append(custom_param)
+                offset += param_length
 
 
 @dataclass  
@@ -1399,6 +1825,12 @@ def _get_message_classes():
     from .protocol import GetReaderCapabilities, GetReaderCapabilitiesResponse
     
     return {
+        # Version Management Messages
+        MessageType.GET_SUPPORTED_VERSION: GetSupportedVersion,
+        MessageType.GET_SUPPORTED_VERSION_RESPONSE: GetSupportedVersionResponse,
+        MessageType.SET_PROTOCOL_VERSION: SetProtocolVersion,
+        MessageType.SET_PROTOCOL_VERSION_RESPONSE: SetProtocolVersionResponse,
+        
         # Reader Capability Messages
         MessageType.GET_READER_CAPABILITIES: GetReaderCapabilities,
         MessageType.GET_READER_CAPABILITIES_RESPONSE: GetReaderCapabilitiesResponse,
@@ -1424,6 +1856,8 @@ def _get_message_classes():
         MessageType.STOP_ROSPEC_RESPONSE: StopROSpecResponse,
         MessageType.DELETE_ROSPEC: DeleteROSpec,
         MessageType.DELETE_ROSPEC_RESPONSE: DeleteROSpecResponse,
+        MessageType.GET_ROSPECS: GetROSpecs,
+        MessageType.GET_ROSPECS_RESPONSE: GetROSpecsResponse,
         
         # AccessSpec Messages
         MessageType.ADD_ACCESSSPEC: AddAccessSpec,
@@ -1437,8 +1871,13 @@ def _get_message_classes():
         MessageType.GET_ACCESSSPECS: GetAccessSpecs,
         MessageType.GET_ACCESSSPECS_RESPONSE: GetAccessSpecsResponse,
         
+        # Client Request Operations
+        MessageType.CLIENT_REQUEST_OP: ClientRequestOp,
+        MessageType.CLIENT_REQUEST_OP_RESPONSE: ClientRequestOpResponse,
+        
         # Report Messages
         MessageType.RO_ACCESS_REPORT: ROAccessReport,
+        MessageType.GET_REPORT: GetReport,
         
         # Error and Connection Messages
         MessageType.ERROR_MESSAGE: ErrorMessage,
@@ -1446,7 +1885,101 @@ def _get_message_classes():
         MessageType.KEEPALIVE_ACK: KeepAliveAck,
         MessageType.CLOSE_CONNECTION: CloseConnection,
         MessageType.CLOSE_CONNECTION_RESPONSE: CloseConnectionResponse,
+        
+        # Custom Messages
+        MessageType.CUSTOM_MESSAGE: CustomMessage,
     }
+
+
+# Client Request Operation Messages
+
+@dataclass
+class ClientRequestOpSpec(LLRPParameter):
+    """ClientRequestOpSpec Parameter - Specification for client-requested operations"""
+    
+    def __init__(self, op_spec_id: int = 0):
+        super().__init__(ParameterType.CLIENT_REQUEST_OP_SPEC)
+        self.op_spec_id = op_spec_id
+        self.access_spec_id = 0
+    
+    def encode(self) -> bytes:
+        """Encode client request op spec"""
+        data = struct.pack('!HH', self.op_spec_id, self.access_spec_id)
+        header = self.encode_header(4 + len(data))
+        return header + data
+    
+    def decode(self, data: bytes) -> int:
+        """Decode client request op spec"""
+        param_type, param_length, header_len, is_tv = LLRPParameter.parse_header(data)
+        if param_type != ParameterType.CLIENT_REQUEST_OP_SPEC:
+            return 0
+        
+        payload_start = header_len
+        if len(data) >= payload_start + 4:
+            self.op_spec_id, self.access_spec_id = struct.unpack('!HH', data[payload_start:payload_start+4])
+        
+        return param_length
+
+
+@dataclass
+class ClientRequestOp(LLRPMessage):
+    """CLIENT_REQUEST_OP Message - Request client-initiated operations
+    Message Type 48: TagReportData Parameter"""
+    
+    def __init__(self, msg_id: int = 0, tag_report_data: 'TagReportData' = None):
+        super().__init__(MessageType.CLIENT_REQUEST_OP, msg_id)
+        self.tag_report_data = tag_report_data
+    
+    def encode_parameters(self) -> bytes:
+        """Encode CLIENT_REQUEST_OP parameters"""
+        if self.tag_report_data:
+            return self.tag_report_data.encode()
+        return b''
+    
+    def decode_parameters(self, data: bytes):
+        """Decode CLIENT_REQUEST_OP parameters"""
+        from .protocol import LLRPParameter
+        
+        offset = 0
+        while offset < len(data):
+            param_type, param_length, header_len, is_tv = LLRPParameter.parse_header(data, offset)
+            
+            if param_type is None:
+                break
+            
+            if param_type == ParameterType.TAG_REPORT_DATA:
+                self.tag_report_data = TagReportData()
+                consumed = self.tag_report_data.decode(data[offset:offset+param_length])
+                offset += consumed
+            else:
+                offset += param_length
+
+
+@dataclass
+class ClientRequestOpResponse(LLRPMessage):
+    """CLIENT_REQUEST_OP_RESPONSE Message"""
+    
+    def __init__(self, msg_id: int = 0):
+        super().__init__(MessageType.CLIENT_REQUEST_OP_RESPONSE, msg_id)
+        self.llrp_status = None
+    
+    def decode_parameters(self, data: bytes):
+        """Decode response parameters"""
+        from .protocol import LLRPParameter, LLRPStatus
+        
+        offset = 0
+        while offset < len(data):
+            param_type, param_length, header_len, is_tv = LLRPParameter.parse_header(data, offset)
+            
+            if param_type is None:
+                break
+                
+            if param_type == 287:  # LLRPStatus
+                self.llrp_status = LLRPStatus()
+                consumed = self.llrp_status.decode(data[offset:offset+param_length])
+                offset += consumed
+            else:
+                offset += param_length
 
 # Create the registry
 MESSAGE_CLASSES = _get_message_classes()
