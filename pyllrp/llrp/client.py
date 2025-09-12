@@ -3159,1043 +3159,1038 @@ class LLRPClient:
                     logger.info("Reader configuration updated successfully")
                     return True
                 return False
-    
-    # EPC Gen2 Advanced Methods
-    
-    def create_filtered_rospec(self, rospec_id: int = None,
-                              epc_filter: str = "",
-                              memory_bank: int = 1,
-                              duration_seconds: float = 5.0,
-                              antenna_ids: List[int] = None,
-                              state_aware: bool = False,
-                              session: int = 0) -> ROSpec:
-        """
-        Create a ROSpec with EPC Gen2 filtering
-        
-        Args:
-            rospec_id: ROSpec ID (auto-assigned if None)
-            epc_filter: EPC pattern to filter (hex string)
-            memory_bank: Memory bank for filter (1=EPC, 2=TID, 3=User)
-            duration_seconds: Inventory duration
-            antenna_ids: List of antenna IDs
-            state_aware: Use state-aware inventory
-            session: Gen2 session number (0-3)
-            
-        Returns:
-            ROSpec with C1G2 filtering
-        """
-        from .c1g2_parameters import (
-            C1G2InventoryCommand, C1G2Filter, C1G2SingulationControl,
-            C1G2TagInventoryStateAware
-        )
-        
-        if rospec_id is None:
-            rospec_id = self.current_rospec_id
-            self.current_rospec_id += 1
-        
-        # Create basic ROSpec
-        rospec = self.create_basic_rospec(
-            rospec_id=rospec_id,
-            duration_ms=int(duration_seconds * 1000),
-            antenna_ids=antenna_ids,
-            report_every_n_tags=1,
-            start_immediate=True
-        )
-        
-        # Create C1G2 inventory command
-        c1g2_inventory = C1G2InventoryCommand()
-        c1g2_inventory.tag_inventory_state_aware = state_aware
-        
-        # Add EPC filter if specified
-        if epc_filter:
-            # Convert hex string to bytes
-            try:
-                filter_data = bytes.fromhex(epc_filter.replace(' ', ''))
-                bit_length = len(filter_data) * 8
-                
-                epc_filter_param = C1G2Filter(
-                    filter_type=3,  # Memory_Bank_Filter
-                    memory_bank=memory_bank,
-                    bit_pointer=32 if memory_bank == 1 else 0,  # Skip PC+CRC for EPC
-                    bit_length=bit_length,
-                    filter_data=filter_data
-                )
-                c1g2_inventory.c1g2_filter.append(epc_filter_param)
-                
-            except ValueError:
-                logger.warning(f"Invalid hex EPC filter: {epc_filter}")
-        
-        # Add singulation control
-        singulation_control = C1G2SingulationControl(
-            session=session,
-            tag_population=32,
-            tag_transit_time=0
-        )
-        
-        if state_aware:
-            state_aware_param = C1G2TagInventoryStateAware(
-                tag_state=0,  # State A
-                session=session
-            )
-            singulation_control.c1g2_tag_inventory_state_aware = state_aware_param
-        
-        c1g2_inventory.c1g2_singulation_control = singulation_control
-        
-        # Add to AISpec
-        if rospec.spec_parameters:
-            aispec = rospec.spec_parameters[0]
-            if aispec.inventory_parameter_specs:
-                inv_param = aispec.inventory_parameter_specs[0]
-                inv_param.antenna_configuration = c1g2_inventory
-        
-        logger.info(f"Created filtered ROSpec {rospec_id}: filter='{epc_filter}', bank={memory_bank}")
-        return rospec
-    
-    def create_selective_rospec(self, rospec_id: int = None,
-                               target_tags: List[Dict] = None,
-                               duration_seconds: float = 5.0,
-                               antenna_ids: List[int] = None) -> ROSpec:
-        """
-        Create ROSpec that selectively targets specific tags
-        
-        Args:
-            rospec_id: ROSpec ID
-            target_tags: List of target tag specifications
-                        [{'epc': 'hex_string', 'memory_bank': 1, 'match': True}, ...]
-            duration_seconds: Inventory duration
-            antenna_ids: Antenna IDs
-            
-        Returns:
-            ROSpec with selective targeting
-        """
-        from .c1g2_parameters import C1G2InventoryCommand, C1G2TagSpec, C1G2TargetTag
-        
-        if rospec_id is None:
-            rospec_id = self.current_rospec_id
-            self.current_rospec_id += 1
-        
-        # Create basic ROSpec
-        rospec = self.create_basic_rospec(
-            rospec_id=rospec_id,
-            duration_ms=int(duration_seconds * 1000),
-            antenna_ids=antenna_ids,
-            report_every_n_tags=1,
-            start_immediate=True
-        )
-        
-        # Create C1G2 inventory command with tag targeting
-        c1g2_inventory = C1G2InventoryCommand()
-        
-        if target_tags:
-            for tag_spec in target_tags:
-                epc_hex = tag_spec.get('epc', '')
-                memory_bank = tag_spec.get('memory_bank', 1)
-                match = tag_spec.get('match', True)
-                
-                if epc_hex:
-                    try:
-                        tag_data = bytes.fromhex(epc_hex.replace(' ', ''))
-                        
-                        # Create target tag
-                        target_tag = C1G2TargetTag(
-                            memory_bank=memory_bank,
-                            match=match,
-                            bit_pointer=32 if memory_bank == 1 else 0,
-                            tag_mask=b'\xff' * len(tag_data),  # Full match mask
-                            tag_data=tag_data
-                        )
-                        
-                        # Create tag spec
-                        tag_spec_param = C1G2TagSpec(target=4)  # SL (Selected)
-                        tag_spec_param.c1g2_target_tag.append(target_tag)
-                        
-                        # Add as custom parameter (simplified implementation)
-                        c1g2_inventory.custom_parameters.append(tag_spec_param)
-                        
-                    except ValueError:
-                        logger.warning(f"Invalid hex EPC: {epc_hex}")
-        
-        # Add to AISpec
-        if rospec.spec_parameters:
-            aispec = rospec.spec_parameters[0]
-            if aispec.inventory_parameter_specs:
-                inv_param = aispec.inventory_parameter_specs[0]
-                inv_param.antenna_configuration = c1g2_inventory
-        
-        logger.info(f"Created selective ROSpec {rospec_id}: {len(target_tags or [])} target tags")
-        return rospec
-    
-    def start_filtered_inventory(self, epc_filter: str = "",
-                                memory_bank: int = 1,
-                                duration_seconds: float = 5.0,
-                                antenna_ids: List[int] = None,
-                                tag_callback: Callable = None,
-                                state_aware: bool = False) -> List[Dict]:
-        """
-        Start inventory with EPC Gen2 filtering
-        
-        Args:
-            epc_filter: EPC pattern to filter (hex string)
-            memory_bank: Memory bank for filter
-            duration_seconds: Inventory duration
-            antenna_ids: Antenna IDs
-            tag_callback: Tag callback function
-            state_aware: Use state-aware inventory
-            
-        Returns:
-            List of filtered tags
-        """
-        # Set callback
-        if tag_callback:
-            self.tag_callback = tag_callback
-        
-        # Clear existing ROSpecs
-        self.clear_rospecs()
-        
-        # Create filtered ROSpec
-        rospec = self.create_filtered_rospec(
-            rospec_id=791,
-            epc_filter=epc_filter,
-            memory_bank=memory_bank,
-            duration_seconds=duration_seconds,
-            antenna_ids=antenna_ids,
-            state_aware=state_aware
-        )
-        
-        # Execute inventory
-        if self.add_rospec(rospec):
-            if self.enable_rospec(791):
-                logger.info(f"Started filtered inventory: filter='{epc_filter}'")
-                
-                # Wait for completion
-                time.sleep(duration_seconds + 0.5)
-                
-                # Stop and clean up
-                self.stop_rospec(791)
-                self.clear_rospecs()
-                
-                # Return collected tags
-                with self.tags_lock:
-                    return self.tags_read.copy()
-        
-        return []
-    
-    def start_selective_inventory(self, target_tags: List[Dict],
-                                 duration_seconds: float = 5.0,
-                                 antenna_ids: List[int] = None,
-                                 tag_callback: Callable = None) -> List[Dict]:
-        """
-        Start inventory targeting specific tags
-        
-        Args:
-            target_tags: List of target tag specifications
-            duration_seconds: Inventory duration
-            antenna_ids: Antenna IDs
-            tag_callback: Tag callback function
-            
-        Returns:
-            List of targeted tags
-        """
-        # Set callback
-        if tag_callback:
-            self.tag_callback = tag_callback
-        
-        # Clear existing ROSpecs
-        self.clear_rospecs()
-        
-        # Create selective ROSpec
-        rospec = self.create_selective_rospec(
-            rospec_id=792,
-            target_tags=target_tags,
-            duration_seconds=duration_seconds,
-            antenna_ids=antenna_ids
-        )
-        
-        # Execute inventory
-        if self.add_rospec(rospec):
-            if self.enable_rospec(792):
-                logger.info(f"Started selective inventory: {len(target_tags)} targets")
-                
-                # Wait for completion
-                time.sleep(duration_seconds + 0.5)
-                
-                # Stop and clean up
-                self.stop_rospec(792)
-                self.clear_rospecs()
-                
-                # Return collected tags
-                with self.tags_lock:
-                    return self.tags_read.copy()
-        
-        return []
-    
-    def configure_gen2_settings(self, session: int = 0, 
-                               tag_population: int = 32,
-                               mode_index: int = 0,
-                               tari: int = 0) -> bool:
-        """
-        Configure EPC Gen2 protocol settings
-        
-        Args:
-            session: Gen2 session number (0-3)
-            tag_population: Expected tag population
-            mode_index: RF mode index from reader capabilities
-            tari: Tari value in nanoseconds
-            
-        Returns:
-            True if configured successfully
-        """
-        # Store settings for future ROSpec creation
-        self._gen2_session = session
-        self._gen2_tag_population = tag_population  
-        self._gen2_mode_index = mode_index
-        self._gen2_tari = tari
-        
-        logger.info(f"Gen2 settings: session={session}, population={tag_population}, mode={mode_index}")
-        return True
-    
-    def find_tags_with_epc_pattern(self, epc_pattern: str,
-                                  memory_bank: int = 1,
-                                  duration_seconds: float = 10.0) -> List[Dict]:
-        """
-        Find tags matching EPC pattern
-        
-        Args:
-            epc_pattern: Partial EPC pattern (hex string)
-            memory_bank: Memory bank to search
-            duration_seconds: Search duration
-            
-        Returns:
-            List of matching tags
-        """
-        return self.start_filtered_inventory(
-            epc_filter=epc_pattern,
-            memory_bank=memory_bank,
-            duration_seconds=duration_seconds
-        )
-    
-    def count_tags_by_tid_manufacturer(self, duration_seconds: float = 5.0) -> Dict[str, int]:
-        """
-        Count tags by TID manufacturer
-        
-        Args:
-            duration_seconds: Inventory duration
-            
-        Returns:
-            Dictionary mapping manufacturer to count
-        """
-        # Get all tags with TID reading
-        tags = self.start_filtered_inventory(
-            epc_filter="",  # No filter
-            memory_bank=2,  # TID memory
-            duration_seconds=duration_seconds
-        )
-        
-        manufacturer_counts = {}
-        
-        for tag in tags:
-            # Extract manufacturer from TID (simplified)
-            tid_hex = tag.get('tid', '')
-            if len(tid_hex) >= 4:
-                # First 2 bytes typically contain manufacturer info
-                manufacturer = tid_hex[:4]
-                manufacturer_counts[manufacturer] = manufacturer_counts.get(manufacturer, 0) + 1
-        
-        return manufacturer_counts
-            return False
-    
-    # EPC Gen2 Advanced Methods
-    
-    def create_filtered_rospec(self, rospec_id: int = None,
-                              epc_filter: str = "",
-                              memory_bank: int = 1,
-                              duration_seconds: float = 5.0,
-                              antenna_ids: List[int] = None,
-                              state_aware: bool = False,
-                              session: int = 0) -> ROSpec:
-        """
-        Create a ROSpec with EPC Gen2 filtering
-        
-        Args:
-            rospec_id: ROSpec ID (auto-assigned if None)
-            epc_filter: EPC pattern to filter (hex string)
-            memory_bank: Memory bank for filter (1=EPC, 2=TID, 3=User)
-            duration_seconds: Inventory duration
-            antenna_ids: List of antenna IDs
-            state_aware: Use state-aware inventory
-            session: Gen2 session number (0-3)
-            
-        Returns:
-            ROSpec with C1G2 filtering
-        """
-        from .c1g2_parameters import (
-            C1G2InventoryCommand, C1G2Filter, C1G2SingulationControl,
-            C1G2TagInventoryStateAware
-        )
-        
-        if rospec_id is None:
-            rospec_id = self.current_rospec_id
-            self.current_rospec_id += 1
-        
-        # Create basic ROSpec
-        rospec = self.create_basic_rospec(
-            rospec_id=rospec_id,
-            duration_ms=int(duration_seconds * 1000),
-            antenna_ids=antenna_ids,
-            report_every_n_tags=1,
-            start_immediate=True
-        )
-        
-        # Create C1G2 inventory command
-        c1g2_inventory = C1G2InventoryCommand()
-        c1g2_inventory.tag_inventory_state_aware = state_aware
-        
-        # Add EPC filter if specified
-        if epc_filter:
-            # Convert hex string to bytes
-            try:
-                filter_data = bytes.fromhex(epc_filter.replace(' ', ''))
-                bit_length = len(filter_data) * 8
-                
-                epc_filter_param = C1G2Filter(
-                    filter_type=3,  # Memory_Bank_Filter
-                    memory_bank=memory_bank,
-                    bit_pointer=32 if memory_bank == 1 else 0,  # Skip PC+CRC for EPC
-                    bit_length=bit_length,
-                    filter_data=filter_data
-                )
-                c1g2_inventory.c1g2_filter.append(epc_filter_param)
-                
-            except ValueError:
-                logger.warning(f"Invalid hex EPC filter: {epc_filter}")
-        
-        # Add singulation control
-        singulation_control = C1G2SingulationControl(
-            session=session,
-            tag_population=32,
-            tag_transit_time=0
-        )
-        
-        if state_aware:
-            state_aware_param = C1G2TagInventoryStateAware(
-                tag_state=0,  # State A
-                session=session
-            )
-            singulation_control.c1g2_tag_inventory_state_aware = state_aware_param
-        
-        c1g2_inventory.c1g2_singulation_control = singulation_control
-        
-        # Add to AISpec
-        if rospec.spec_parameters:
-            aispec = rospec.spec_parameters[0]
-            if aispec.inventory_parameter_specs:
-                inv_param = aispec.inventory_parameter_specs[0]
-                inv_param.antenna_configuration = c1g2_inventory
-        
-        logger.info(f"Created filtered ROSpec {rospec_id}: filter='{epc_filter}', bank={memory_bank}")
-        return rospec
-    
-    def create_selective_rospec(self, rospec_id: int = None,
-                               target_tags: List[Dict] = None,
-                               duration_seconds: float = 5.0,
-                               antenna_ids: List[int] = None) -> ROSpec:
-        """
-        Create ROSpec that selectively targets specific tags
-        
-        Args:
-            rospec_id: ROSpec ID
-            target_tags: List of target tag specifications
-                        [{'epc': 'hex_string', 'memory_bank': 1, 'match': True}, ...]
-            duration_seconds: Inventory duration
-            antenna_ids: Antenna IDs
-            
-        Returns:
-            ROSpec with selective targeting
-        """
-        from .c1g2_parameters import C1G2InventoryCommand, C1G2TagSpec, C1G2TargetTag
-        
-        if rospec_id is None:
-            rospec_id = self.current_rospec_id
-            self.current_rospec_id += 1
-        
-        # Create basic ROSpec
-        rospec = self.create_basic_rospec(
-            rospec_id=rospec_id,
-            duration_ms=int(duration_seconds * 1000),
-            antenna_ids=antenna_ids,
-            report_every_n_tags=1,
-            start_immediate=True
-        )
-        
-        # Create C1G2 inventory command with tag targeting
-        c1g2_inventory = C1G2InventoryCommand()
-        
-        if target_tags:
-            for tag_spec in target_tags:
-                epc_hex = tag_spec.get('epc', '')
-                memory_bank = tag_spec.get('memory_bank', 1)
-                match = tag_spec.get('match', True)
-                
-                if epc_hex:
-                    try:
-                        tag_data = bytes.fromhex(epc_hex.replace(' ', ''))
-                        
-                        # Create target tag
-                        target_tag = C1G2TargetTag(
-                            memory_bank=memory_bank,
-                            match=match,
-                            bit_pointer=32 if memory_bank == 1 else 0,
-                            tag_mask=b'\xff' * len(tag_data),  # Full match mask
-                            tag_data=tag_data
-                        )
-                        
-                        # Create tag spec
-                        tag_spec_param = C1G2TagSpec(target=4)  # SL (Selected)
-                        tag_spec_param.c1g2_target_tag.append(target_tag)
-                        
-                        # Add as custom parameter (simplified implementation)
-                        c1g2_inventory.custom_parameters.append(tag_spec_param)
-                        
-                    except ValueError:
-                        logger.warning(f"Invalid hex EPC: {epc_hex}")
-        
-        # Add to AISpec
-        if rospec.spec_parameters:
-            aispec = rospec.spec_parameters[0]
-            if aispec.inventory_parameter_specs:
-                inv_param = aispec.inventory_parameter_specs[0]
-                inv_param.antenna_configuration = c1g2_inventory
-        
-        logger.info(f"Created selective ROSpec {rospec_id}: {len(target_tags or [])} target tags")
-        return rospec
-    
-    def start_filtered_inventory(self, epc_filter: str = "",
-                                memory_bank: int = 1,
-                                duration_seconds: float = 5.0,
-                                antenna_ids: List[int] = None,
-                                tag_callback: Callable = None,
-                                state_aware: bool = False) -> List[Dict]:
-        """
-        Start inventory with EPC Gen2 filtering
-        
-        Args:
-            epc_filter: EPC pattern to filter (hex string)
-            memory_bank: Memory bank for filter
-            duration_seconds: Inventory duration
-            antenna_ids: Antenna IDs
-            tag_callback: Tag callback function
-            state_aware: Use state-aware inventory
-            
-        Returns:
-            List of filtered tags
-        """
-        # Set callback
-        if tag_callback:
-            self.tag_callback = tag_callback
-        
-        # Clear existing ROSpecs
-        self.clear_rospecs()
-        
-        # Create filtered ROSpec
-        rospec = self.create_filtered_rospec(
-            rospec_id=791,
-            epc_filter=epc_filter,
-            memory_bank=memory_bank,
-            duration_seconds=duration_seconds,
-            antenna_ids=antenna_ids,
-            state_aware=state_aware
-        )
-        
-        # Execute inventory
-        if self.add_rospec(rospec):
-            if self.enable_rospec(791):
-                logger.info(f"Started filtered inventory: filter='{epc_filter}'")
-                
-                # Wait for completion
-                time.sleep(duration_seconds + 0.5)
-                
-                # Stop and clean up
-                self.stop_rospec(791)
-                self.clear_rospecs()
-                
-                # Return collected tags
-                with self.tags_lock:
-                    return self.tags_read.copy()
-        
-        return []
-    
-    def start_selective_inventory(self, target_tags: List[Dict],
-                                 duration_seconds: float = 5.0,
-                                 antenna_ids: List[int] = None,
-                                 tag_callback: Callable = None) -> List[Dict]:
-        """
-        Start inventory targeting specific tags
-        
-        Args:
-            target_tags: List of target tag specifications
-            duration_seconds: Inventory duration
-            antenna_ids: Antenna IDs
-            tag_callback: Tag callback function
-            
-        Returns:
-            List of targeted tags
-        """
-        # Set callback
-        if tag_callback:
-            self.tag_callback = tag_callback
-        
-        # Clear existing ROSpecs
-        self.clear_rospecs()
-        
-        # Create selective ROSpec
-        rospec = self.create_selective_rospec(
-            rospec_id=792,
-            target_tags=target_tags,
-            duration_seconds=duration_seconds,
-            antenna_ids=antenna_ids
-        )
-        
-        # Execute inventory
-        if self.add_rospec(rospec):
-            if self.enable_rospec(792):
-                logger.info(f"Started selective inventory: {len(target_tags)} targets")
-                
-                # Wait for completion
-                time.sleep(duration_seconds + 0.5)
-                
-                # Stop and clean up
-                self.stop_rospec(792)
-                self.clear_rospecs()
-                
-                # Return collected tags
-                with self.tags_lock:
-                    return self.tags_read.copy()
-        
-        return []
-    
-    def configure_gen2_settings(self, session: int = 0, 
-                               tag_population: int = 32,
-                               mode_index: int = 0,
-                               tari: int = 0) -> bool:
-        """
-        Configure EPC Gen2 protocol settings
-        
-        Args:
-            session: Gen2 session number (0-3)
-            tag_population: Expected tag population
-            mode_index: RF mode index from reader capabilities
-            tari: Tari value in nanoseconds
-            
-        Returns:
-            True if configured successfully
-        """
-        # Store settings for future ROSpec creation
-        self._gen2_session = session
-        self._gen2_tag_population = tag_population  
-        self._gen2_mode_index = mode_index
-        self._gen2_tari = tari
-        
-        logger.info(f"Gen2 settings: session={session}, population={tag_population}, mode={mode_index}")
-        return True
-    
-    def find_tags_with_epc_pattern(self, epc_pattern: str,
-                                  memory_bank: int = 1,
-                                  duration_seconds: float = 10.0) -> List[Dict]:
-        """
-        Find tags matching EPC pattern
-        
-        Args:
-            epc_pattern: Partial EPC pattern (hex string)
-            memory_bank: Memory bank to search
-            duration_seconds: Search duration
-            
-        Returns:
-            List of matching tags
-        """
-        return self.start_filtered_inventory(
-            epc_filter=epc_pattern,
-            memory_bank=memory_bank,
-            duration_seconds=duration_seconds
-        )
-    
-    def count_tags_by_tid_manufacturer(self, duration_seconds: float = 5.0) -> Dict[str, int]:
-        """
-        Count tags by TID manufacturer
-        
-        Args:
-            duration_seconds: Inventory duration
-            
-        Returns:
-            Dictionary mapping manufacturer to count
-        """
-        # Get all tags with TID reading
-        tags = self.start_filtered_inventory(
-            epc_filter="",  # No filter
-            memory_bank=2,  # TID memory
-            duration_seconds=duration_seconds
-        )
-        
-        manufacturer_counts = {}
-        
-        for tag in tags:
-            # Extract manufacturer from TID (simplified)
-            tid_hex = tag.get('tid', '')
-            if len(tid_hex) >= 4:
-                # First 2 bytes typically contain manufacturer info
-                manufacturer = tid_hex[:4]
-                manufacturer_counts[manufacturer] = manufacturer_counts.get(manufacturer, 0) + 1
-        
-        return manufacturer_counts
-            
-        except LLRPError as e:
-            logger.error(f"LLRP error setting configuration: {e}")
-            return False
-    
-    # EPC Gen2 Advanced Methods
-    
-    def create_filtered_rospec(self, rospec_id: int = None,
-                              epc_filter: str = "",
-                              memory_bank: int = 1,
-                              duration_seconds: float = 5.0,
-                              antenna_ids: List[int] = None,
-                              state_aware: bool = False,
-                              session: int = 0) -> ROSpec:
-        """
-        Create a ROSpec with EPC Gen2 filtering
-        
-        Args:
-            rospec_id: ROSpec ID (auto-assigned if None)
-            epc_filter: EPC pattern to filter (hex string)
-            memory_bank: Memory bank for filter (1=EPC, 2=TID, 3=User)
-            duration_seconds: Inventory duration
-            antenna_ids: List of antenna IDs
-            state_aware: Use state-aware inventory
-            session: Gen2 session number (0-3)
-            
-        Returns:
-            ROSpec with C1G2 filtering
-        """
-        from .c1g2_parameters import (
-            C1G2InventoryCommand, C1G2Filter, C1G2SingulationControl,
-            C1G2TagInventoryStateAware
-        )
-        
-        if rospec_id is None:
-            rospec_id = self.current_rospec_id
-            self.current_rospec_id += 1
-        
-        # Create basic ROSpec
-        rospec = self.create_basic_rospec(
-            rospec_id=rospec_id,
-            duration_ms=int(duration_seconds * 1000),
-            antenna_ids=antenna_ids,
-            report_every_n_tags=1,
-            start_immediate=True
-        )
-        
-        # Create C1G2 inventory command
-        c1g2_inventory = C1G2InventoryCommand()
-        c1g2_inventory.tag_inventory_state_aware = state_aware
-        
-        # Add EPC filter if specified
-        if epc_filter:
-            # Convert hex string to bytes
-            try:
-                filter_data = bytes.fromhex(epc_filter.replace(' ', ''))
-                bit_length = len(filter_data) * 8
-                
-                epc_filter_param = C1G2Filter(
-                    filter_type=3,  # Memory_Bank_Filter
-                    memory_bank=memory_bank,
-                    bit_pointer=32 if memory_bank == 1 else 0,  # Skip PC+CRC for EPC
-                    bit_length=bit_length,
-                    filter_data=filter_data
-                )
-                c1g2_inventory.c1g2_filter.append(epc_filter_param)
-                
-            except ValueError:
-                logger.warning(f"Invalid hex EPC filter: {epc_filter}")
-        
-        # Add singulation control
-        singulation_control = C1G2SingulationControl(
-            session=session,
-            tag_population=32,
-            tag_transit_time=0
-        )
-        
-        if state_aware:
-            state_aware_param = C1G2TagInventoryStateAware(
-                tag_state=0,  # State A
-                session=session
-            )
-            singulation_control.c1g2_tag_inventory_state_aware = state_aware_param
-        
-        c1g2_inventory.c1g2_singulation_control = singulation_control
-        
-        # Add to AISpec
-        if rospec.spec_parameters:
-            aispec = rospec.spec_parameters[0]
-            if aispec.inventory_parameter_specs:
-                inv_param = aispec.inventory_parameter_specs[0]
-                inv_param.antenna_configuration = c1g2_inventory
-        
-        logger.info(f"Created filtered ROSpec {rospec_id}: filter='{epc_filter}', bank={memory_bank}")
-        return rospec
-    
-    def create_selective_rospec(self, rospec_id: int = None,
-                               target_tags: List[Dict] = None,
-                               duration_seconds: float = 5.0,
-                               antenna_ids: List[int] = None) -> ROSpec:
-        """
-        Create ROSpec that selectively targets specific tags
-        
-        Args:
-            rospec_id: ROSpec ID
-            target_tags: List of target tag specifications
-                        [{'epc': 'hex_string', 'memory_bank': 1, 'match': True}, ...]
-            duration_seconds: Inventory duration
-            antenna_ids: Antenna IDs
-            
-        Returns:
-            ROSpec with selective targeting
-        """
-        from .c1g2_parameters import C1G2InventoryCommand, C1G2TagSpec, C1G2TargetTag
-        
-        if rospec_id is None:
-            rospec_id = self.current_rospec_id
-            self.current_rospec_id += 1
-        
-        # Create basic ROSpec
-        rospec = self.create_basic_rospec(
-            rospec_id=rospec_id,
-            duration_ms=int(duration_seconds * 1000),
-            antenna_ids=antenna_ids,
-            report_every_n_tags=1,
-            start_immediate=True
-        )
-        
-        # Create C1G2 inventory command with tag targeting
-        c1g2_inventory = C1G2InventoryCommand()
-        
-        if target_tags:
-            for tag_spec in target_tags:
-                epc_hex = tag_spec.get('epc', '')
-                memory_bank = tag_spec.get('memory_bank', 1)
-                match = tag_spec.get('match', True)
-                
-                if epc_hex:
-                    try:
-                        tag_data = bytes.fromhex(epc_hex.replace(' ', ''))
-                        
-                        # Create target tag
-                        target_tag = C1G2TargetTag(
-                            memory_bank=memory_bank,
-                            match=match,
-                            bit_pointer=32 if memory_bank == 1 else 0,
-                            tag_mask=b'\xff' * len(tag_data),  # Full match mask
-                            tag_data=tag_data
-                        )
-                        
-                        # Create tag spec
-                        tag_spec_param = C1G2TagSpec(target=4)  # SL (Selected)
-                        tag_spec_param.c1g2_target_tag.append(target_tag)
-                        
-                        # Add as custom parameter (simplified implementation)
-                        c1g2_inventory.custom_parameters.append(tag_spec_param)
-                        
-                    except ValueError:
-                        logger.warning(f"Invalid hex EPC: {epc_hex}")
-        
-        # Add to AISpec
-        if rospec.spec_parameters:
-            aispec = rospec.spec_parameters[0]
-            if aispec.inventory_parameter_specs:
-                inv_param = aispec.inventory_parameter_specs[0]
-                inv_param.antenna_configuration = c1g2_inventory
-        
-        logger.info(f"Created selective ROSpec {rospec_id}: {len(target_tags or [])} target tags")
-        return rospec
-    
-    def start_filtered_inventory(self, epc_filter: str = "",
-                                memory_bank: int = 1,
-                                duration_seconds: float = 5.0,
-                                antenna_ids: List[int] = None,
-                                tag_callback: Callable = None,
-                                state_aware: bool = False) -> List[Dict]:
-        """
-        Start inventory with EPC Gen2 filtering
-        
-        Args:
-            epc_filter: EPC pattern to filter (hex string)
-            memory_bank: Memory bank for filter
-            duration_seconds: Inventory duration
-            antenna_ids: Antenna IDs
-            tag_callback: Tag callback function
-            state_aware: Use state-aware inventory
-            
-        Returns:
-            List of filtered tags
-        """
-        # Set callback
-        if tag_callback:
-            self.tag_callback = tag_callback
-        
-        # Clear existing ROSpecs
-        self.clear_rospecs()
-        
-        # Create filtered ROSpec
-        rospec = self.create_filtered_rospec(
-            rospec_id=791,
-            epc_filter=epc_filter,
-            memory_bank=memory_bank,
-            duration_seconds=duration_seconds,
-            antenna_ids=antenna_ids,
-            state_aware=state_aware
-        )
-        
-        # Execute inventory
-        if self.add_rospec(rospec):
-            if self.enable_rospec(791):
-                logger.info(f"Started filtered inventory: filter='{epc_filter}'")
-                
-                # Wait for completion
-                time.sleep(duration_seconds + 0.5)
-                
-                # Stop and clean up
-                self.stop_rospec(791)
-                self.clear_rospecs()
-                
-                # Return collected tags
-                with self.tags_lock:
-                    return self.tags_read.copy()
-        
-        return []
-    
-    def start_selective_inventory(self, target_tags: List[Dict],
-                                 duration_seconds: float = 5.0,
-                                 antenna_ids: List[int] = None,
-                                 tag_callback: Callable = None) -> List[Dict]:
-        """
-        Start inventory targeting specific tags
-        
-        Args:
-            target_tags: List of target tag specifications
-            duration_seconds: Inventory duration
-            antenna_ids: Antenna IDs
-            tag_callback: Tag callback function
-            
-        Returns:
-            List of targeted tags
-        """
-        # Set callback
-        if tag_callback:
-            self.tag_callback = tag_callback
-        
-        # Clear existing ROSpecs
-        self.clear_rospecs()
-        
-        # Create selective ROSpec
-        rospec = self.create_selective_rospec(
-            rospec_id=792,
-            target_tags=target_tags,
-            duration_seconds=duration_seconds,
-            antenna_ids=antenna_ids
-        )
-        
-        # Execute inventory
-        if self.add_rospec(rospec):
-            if self.enable_rospec(792):
-                logger.info(f"Started selective inventory: {len(target_tags)} targets")
-                
-                # Wait for completion
-                time.sleep(duration_seconds + 0.5)
-                
-                # Stop and clean up
-                self.stop_rospec(792)
-                self.clear_rospecs()
-                
-                # Return collected tags
-                with self.tags_lock:
-                    return self.tags_read.copy()
-        
-        return []
-    
-    def configure_gen2_settings(self, session: int = 0, 
-                               tag_population: int = 32,
-                               mode_index: int = 0,
-                               tari: int = 0) -> bool:
-        """
-        Configure EPC Gen2 protocol settings
-        
-        Args:
-            session: Gen2 session number (0-3)
-            tag_population: Expected tag population
-            mode_index: RF mode index from reader capabilities
-            tari: Tari value in nanoseconds
-            
-        Returns:
-            True if configured successfully
-        """
-        # Store settings for future ROSpec creation
-        self._gen2_session = session
-        self._gen2_tag_population = tag_population  
-        self._gen2_mode_index = mode_index
-        self._gen2_tari = tari
-        
-        logger.info(f"Gen2 settings: session={session}, population={tag_population}, mode={mode_index}")
-        return True
-    
-    def find_tags_with_epc_pattern(self, epc_pattern: str,
-                                  memory_bank: int = 1,
-                                  duration_seconds: float = 10.0) -> List[Dict]:
-        """
-        Find tags matching EPC pattern
-        
-        Args:
-            epc_pattern: Partial EPC pattern (hex string)
-            memory_bank: Memory bank to search
-            duration_seconds: Search duration
-            
-        Returns:
-            List of matching tags
-        """
-        return self.start_filtered_inventory(
-            epc_filter=epc_pattern,
-            memory_bank=memory_bank,
-            duration_seconds=duration_seconds
-        )
-    
-    def count_tags_by_tid_manufacturer(self, duration_seconds: float = 5.0) -> Dict[str, int]:
-        """
-        Count tags by TID manufacturer
-        
-        Args:
-            duration_seconds: Inventory duration
-            
-        Returns:
-            Dictionary mapping manufacturer to count
-        """
-        # Get all tags with TID reading
-        tags = self.start_filtered_inventory(
-            epc_filter="",  # No filter
-            memory_bank=2,  # TID memory
-            duration_seconds=duration_seconds
-        )
-        
-        manufacturer_counts = {}
-        
-        for tag in tags:
-            # Extract manufacturer from TID (simplified)
-            tid_hex = tag.get('tid', '')
-            if len(tid_hex) >= 4:
-                # First 2 bytes typically contain manufacturer info
-                manufacturer = tid_hex[:4]
-                manufacturer_counts[manufacturer] = manufacturer_counts.get(manufacturer, 0) + 1
-        
-        return manufacturer_counts
         except Exception as e:
-            logger.error(f"Unexpected error setting configuration: {e}")
+            logger.error(f"Failed to set reader config: {e}")
             return False
+    
+    # EPC Gen2 Advanced Methods
+    
+    def create_filtered_rospec(self, rospec_id: int = None,
+                              epc_filter: str = "",
+                              memory_bank: int = 1,
+                              duration_seconds: float = 5.0,
+                              antenna_ids: List[int] = None,
+                              state_aware: bool = False,
+                              session: int = 0) -> ROSpec:
+        """
+        Create a ROSpec with EPC Gen2 filtering
+        
+        Args:
+            rospec_id: ROSpec ID (auto-assigned if None)
+            epc_filter: EPC pattern to filter (hex string)
+            memory_bank: Memory bank for filter (1=EPC, 2=TID, 3=User)
+            duration_seconds: Inventory duration
+            antenna_ids: List of antenna IDs
+            state_aware: Use state-aware inventory
+            session: Gen2 session number (0-3)
+            
+        Returns:
+            ROSpec with C1G2 filtering
+        """
+        from .c1g2_parameters import (
+            C1G2InventoryCommand, C1G2Filter, C1G2SingulationControl,
+            C1G2TagInventoryStateAware
+        )
+        
+        if rospec_id is None:
+            rospec_id = self.current_rospec_id
+            self.current_rospec_id += 1
+        
+        # Create basic ROSpec
+        rospec = self.create_basic_rospec(
+            rospec_id=rospec_id,
+            duration_ms=int(duration_seconds * 1000),
+            antenna_ids=antenna_ids,
+            report_every_n_tags=1,
+            start_immediate=True
+        )
+        
+        # Create C1G2 inventory command
+        c1g2_inventory = C1G2InventoryCommand()
+        c1g2_inventory.tag_inventory_state_aware = state_aware
+        
+        # Add EPC filter if specified
+        if epc_filter:
+            # Convert hex string to bytes
+            try:
+                filter_data = bytes.fromhex(epc_filter.replace(' ', ''))
+                bit_length = len(filter_data) * 8
+                
+                epc_filter_param = C1G2Filter(
+                    filter_type=3,  # Memory_Bank_Filter
+                    memory_bank=memory_bank,
+                    bit_pointer=32 if memory_bank == 1 else 0,  # Skip PC+CRC for EPC
+                    bit_length=bit_length,
+                    filter_data=filter_data
+                )
+                c1g2_inventory.c1g2_filter.append(epc_filter_param)
+                
+            except ValueError:
+                logger.warning(f"Invalid hex EPC filter: {epc_filter}")
+        
+        # Add singulation control
+        singulation_control = C1G2SingulationControl(
+            session=session,
+            tag_population=32,
+            tag_transit_time=0
+        )
+        
+        if state_aware:
+            state_aware_param = C1G2TagInventoryStateAware(
+                tag_state=0,  # State A
+                session=session
+            )
+            singulation_control.c1g2_tag_inventory_state_aware = state_aware_param
+        
+        c1g2_inventory.c1g2_singulation_control = singulation_control
+        
+        # Add to AISpec
+        if rospec.spec_parameters:
+            aispec = rospec.spec_parameters[0]
+            if aispec.inventory_parameter_specs:
+                inv_param = aispec.inventory_parameter_specs[0]
+                inv_param.antenna_configuration = c1g2_inventory
+        
+        logger.info(f"Created filtered ROSpec {rospec_id}: filter='{epc_filter}', bank={memory_bank}")
+        return rospec
+    
+    def create_selective_rospec(self, rospec_id: int = None,
+                               target_tags: List[Dict] = None,
+                               duration_seconds: float = 5.0,
+                               antenna_ids: List[int] = None) -> ROSpec:
+        """
+        Create ROSpec that selectively targets specific tags
+        
+        Args:
+            rospec_id: ROSpec ID
+            target_tags: List of target tag specifications
+                        [{'epc': 'hex_string', 'memory_bank': 1, 'match': True}, ...]
+            duration_seconds: Inventory duration
+            antenna_ids: Antenna IDs
+            
+        Returns:
+            ROSpec with selective targeting
+        """
+        from .c1g2_parameters import C1G2InventoryCommand, C1G2TagSpec, C1G2TargetTag
+        
+        if rospec_id is None:
+            rospec_id = self.current_rospec_id
+            self.current_rospec_id += 1
+        
+        # Create basic ROSpec
+        rospec = self.create_basic_rospec(
+            rospec_id=rospec_id,
+            duration_ms=int(duration_seconds * 1000),
+            antenna_ids=antenna_ids,
+            report_every_n_tags=1,
+            start_immediate=True
+        )
+        
+        # Create C1G2 inventory command with tag targeting
+        c1g2_inventory = C1G2InventoryCommand()
+        
+        if target_tags:
+            for tag_spec in target_tags:
+                epc_hex = tag_spec.get('epc', '')
+                memory_bank = tag_spec.get('memory_bank', 1)
+                match = tag_spec.get('match', True)
+                
+                if epc_hex:
+                    try:
+                        tag_data = bytes.fromhex(epc_hex.replace(' ', ''))
+                        
+                        # Create target tag
+                        target_tag = C1G2TargetTag(
+                            memory_bank=memory_bank,
+                            match=match,
+                            bit_pointer=32 if memory_bank == 1 else 0,
+                            tag_mask=b'\xff' * len(tag_data),  # Full match mask
+                            tag_data=tag_data
+                        )
+                        
+                        # Create tag spec
+                        tag_spec_param = C1G2TagSpec(target=4)  # SL (Selected)
+                        tag_spec_param.c1g2_target_tag.append(target_tag)
+                        
+                        # Add as custom parameter (simplified implementation)
+                        c1g2_inventory.custom_parameters.append(tag_spec_param)
+                        
+                    except ValueError:
+                        logger.warning(f"Invalid hex EPC: {epc_hex}")
+        
+        # Add to AISpec
+        if rospec.spec_parameters:
+            aispec = rospec.spec_parameters[0]
+            if aispec.inventory_parameter_specs:
+                inv_param = aispec.inventory_parameter_specs[0]
+                inv_param.antenna_configuration = c1g2_inventory
+        
+        logger.info(f"Created selective ROSpec {rospec_id}: {len(target_tags or [])} target tags")
+        return rospec
+    
+    def start_filtered_inventory(self, epc_filter: str = "",
+                                memory_bank: int = 1,
+                                duration_seconds: float = 5.0,
+                                antenna_ids: List[int] = None,
+                                tag_callback: Callable = None,
+                                state_aware: bool = False) -> List[Dict]:
+        """
+        Start inventory with EPC Gen2 filtering
+        
+        Args:
+            epc_filter: EPC pattern to filter (hex string)
+            memory_bank: Memory bank for filter
+            duration_seconds: Inventory duration
+            antenna_ids: Antenna IDs
+            tag_callback: Tag callback function
+            state_aware: Use state-aware inventory
+            
+        Returns:
+            List of filtered tags
+        """
+        # Set callback
+        if tag_callback:
+            self.tag_callback = tag_callback
+        
+        # Clear existing ROSpecs
+        self.clear_rospecs()
+        
+        # Create filtered ROSpec
+        rospec = self.create_filtered_rospec(
+            rospec_id=791,
+            epc_filter=epc_filter,
+            memory_bank=memory_bank,
+            duration_seconds=duration_seconds,
+            antenna_ids=antenna_ids,
+            state_aware=state_aware
+        )
+        
+        # Execute inventory
+        if self.add_rospec(rospec):
+            if self.enable_rospec(791):
+                logger.info(f"Started filtered inventory: filter='{epc_filter}'")
+                
+                # Wait for completion
+                time.sleep(duration_seconds + 0.5)
+                
+                # Stop and clean up
+                self.stop_rospec(791)
+                self.clear_rospecs()
+                
+                # Return collected tags
+                with self.tags_lock:
+                    return self.tags_read.copy()
+        
+        return []
+    
+    def start_selective_inventory(self, target_tags: List[Dict],
+                                 duration_seconds: float = 5.0,
+                                 antenna_ids: List[int] = None,
+                                 tag_callback: Callable = None) -> List[Dict]:
+        """
+        Start inventory targeting specific tags
+        
+        Args:
+            target_tags: List of target tag specifications
+            duration_seconds: Inventory duration
+            antenna_ids: Antenna IDs
+            tag_callback: Tag callback function
+            
+        Returns:
+            List of targeted tags
+        """
+        # Set callback
+        if tag_callback:
+            self.tag_callback = tag_callback
+        
+        # Clear existing ROSpecs
+        self.clear_rospecs()
+        
+        # Create selective ROSpec
+        rospec = self.create_selective_rospec(
+            rospec_id=792,
+            target_tags=target_tags,
+            duration_seconds=duration_seconds,
+            antenna_ids=antenna_ids
+        )
+        
+        # Execute inventory
+        if self.add_rospec(rospec):
+            if self.enable_rospec(792):
+                logger.info(f"Started selective inventory: {len(target_tags)} targets")
+                
+                # Wait for completion
+                time.sleep(duration_seconds + 0.5)
+                
+                # Stop and clean up
+                self.stop_rospec(792)
+                self.clear_rospecs()
+                
+                # Return collected tags
+                with self.tags_lock:
+                    return self.tags_read.copy()
+        
+        return []
+    
+    def configure_gen2_settings(self, session: int = 0, 
+                               tag_population: int = 32,
+                               mode_index: int = 0,
+                               tari: int = 0) -> bool:
+        """
+        Configure EPC Gen2 protocol settings
+        
+        Args:
+            session: Gen2 session number (0-3)
+            tag_population: Expected tag population
+            mode_index: RF mode index from reader capabilities
+            tari: Tari value in nanoseconds
+            
+        Returns:
+            True if configured successfully
+        """
+        # Store settings for future ROSpec creation
+        self._gen2_session = session
+        self._gen2_tag_population = tag_population  
+        self._gen2_mode_index = mode_index
+        self._gen2_tari = tari
+        
+        logger.info(f"Gen2 settings: session={session}, population={tag_population}, mode={mode_index}")
+        return True
+    
+    def find_tags_with_epc_pattern(self, epc_pattern: str,
+                                  memory_bank: int = 1,
+                                  duration_seconds: float = 10.0) -> List[Dict]:
+        """
+        Find tags matching EPC pattern
+        
+        Args:
+            epc_pattern: Partial EPC pattern (hex string)
+            memory_bank: Memory bank to search
+            duration_seconds: Search duration
+            
+        Returns:
+            List of matching tags
+        """
+        return self.start_filtered_inventory(
+            epc_filter=epc_pattern,
+            memory_bank=memory_bank,
+            duration_seconds=duration_seconds
+        )
+    
+    def count_tags_by_tid_manufacturer(self, duration_seconds: float = 5.0) -> Dict[str, int]:
+        """
+        Count tags by TID manufacturer
+        
+        Args:
+            duration_seconds: Inventory duration
+            
+        Returns:
+            Dictionary mapping manufacturer to count
+        """
+        # Get all tags with TID reading
+        tags = self.start_filtered_inventory(
+            epc_filter="",  # No filter
+            memory_bank=2,  # TID memory
+            duration_seconds=duration_seconds
+        )
+        
+        manufacturer_counts = {}
+        
+        for tag in tags:
+            # Extract manufacturer from TID (simplified)
+            tid_hex = tag.get('tid', '')
+            if len(tid_hex) >= 4:
+                # First 2 bytes typically contain manufacturer info
+                manufacturer = tid_hex[:4]
+                manufacturer_counts[manufacturer] = manufacturer_counts.get(manufacturer, 0) + 1
+        
+        return manufacturer_counts
+    
+    # EPC Gen2 Advanced Methods
+    
+    def create_filtered_rospec(self, rospec_id: int = None,
+                              epc_filter: str = "",
+                              memory_bank: int = 1,
+                              duration_seconds: float = 5.0,
+                              antenna_ids: List[int] = None,
+                              state_aware: bool = False,
+                              session: int = 0) -> ROSpec:
+        """
+        Create a ROSpec with EPC Gen2 filtering
+        
+        Args:
+            rospec_id: ROSpec ID (auto-assigned if None)
+            epc_filter: EPC pattern to filter (hex string)
+            memory_bank: Memory bank for filter (1=EPC, 2=TID, 3=User)
+            duration_seconds: Inventory duration
+            antenna_ids: List of antenna IDs
+            state_aware: Use state-aware inventory
+            session: Gen2 session number (0-3)
+            
+        Returns:
+            ROSpec with C1G2 filtering
+        """
+        from .c1g2_parameters import (
+            C1G2InventoryCommand, C1G2Filter, C1G2SingulationControl,
+            C1G2TagInventoryStateAware
+        )
+        
+        if rospec_id is None:
+            rospec_id = self.current_rospec_id
+            self.current_rospec_id += 1
+        
+        # Create basic ROSpec
+        rospec = self.create_basic_rospec(
+            rospec_id=rospec_id,
+            duration_ms=int(duration_seconds * 1000),
+            antenna_ids=antenna_ids,
+            report_every_n_tags=1,
+            start_immediate=True
+        )
+        
+        # Create C1G2 inventory command
+        c1g2_inventory = C1G2InventoryCommand()
+        c1g2_inventory.tag_inventory_state_aware = state_aware
+        
+        # Add EPC filter if specified
+        if epc_filter:
+            # Convert hex string to bytes
+            try:
+                filter_data = bytes.fromhex(epc_filter.replace(' ', ''))
+                bit_length = len(filter_data) * 8
+                
+                epc_filter_param = C1G2Filter(
+                    filter_type=3,  # Memory_Bank_Filter
+                    memory_bank=memory_bank,
+                    bit_pointer=32 if memory_bank == 1 else 0,  # Skip PC+CRC for EPC
+                    bit_length=bit_length,
+                    filter_data=filter_data
+                )
+                c1g2_inventory.c1g2_filter.append(epc_filter_param)
+                
+            except ValueError:
+                logger.warning(f"Invalid hex EPC filter: {epc_filter}")
+        
+        # Add singulation control
+        singulation_control = C1G2SingulationControl(
+            session=session,
+            tag_population=32,
+            tag_transit_time=0
+        )
+        
+        if state_aware:
+            state_aware_param = C1G2TagInventoryStateAware(
+                tag_state=0,  # State A
+                session=session
+            )
+            singulation_control.c1g2_tag_inventory_state_aware = state_aware_param
+        
+        c1g2_inventory.c1g2_singulation_control = singulation_control
+        
+        # Add to AISpec
+        if rospec.spec_parameters:
+            aispec = rospec.spec_parameters[0]
+            if aispec.inventory_parameter_specs:
+                inv_param = aispec.inventory_parameter_specs[0]
+                inv_param.antenna_configuration = c1g2_inventory
+        
+        logger.info(f"Created filtered ROSpec {rospec_id}: filter='{epc_filter}', bank={memory_bank}")
+        return rospec
+    
+    def create_selective_rospec(self, rospec_id: int = None,
+                               target_tags: List[Dict] = None,
+                               duration_seconds: float = 5.0,
+                               antenna_ids: List[int] = None) -> ROSpec:
+        """
+        Create ROSpec that selectively targets specific tags
+        
+        Args:
+            rospec_id: ROSpec ID
+            target_tags: List of target tag specifications
+                        [{'epc': 'hex_string', 'memory_bank': 1, 'match': True}, ...]
+            duration_seconds: Inventory duration
+            antenna_ids: Antenna IDs
+            
+        Returns:
+            ROSpec with selective targeting
+        """
+        from .c1g2_parameters import C1G2InventoryCommand, C1G2TagSpec, C1G2TargetTag
+        
+        if rospec_id is None:
+            rospec_id = self.current_rospec_id
+            self.current_rospec_id += 1
+        
+        # Create basic ROSpec
+        rospec = self.create_basic_rospec(
+            rospec_id=rospec_id,
+            duration_ms=int(duration_seconds * 1000),
+            antenna_ids=antenna_ids,
+            report_every_n_tags=1,
+            start_immediate=True
+        )
+        
+        # Create C1G2 inventory command with tag targeting
+        c1g2_inventory = C1G2InventoryCommand()
+        
+        if target_tags:
+            for tag_spec in target_tags:
+                epc_hex = tag_spec.get('epc', '')
+                memory_bank = tag_spec.get('memory_bank', 1)
+                match = tag_spec.get('match', True)
+                
+                if epc_hex:
+                    try:
+                        tag_data = bytes.fromhex(epc_hex.replace(' ', ''))
+                        
+                        # Create target tag
+                        target_tag = C1G2TargetTag(
+                            memory_bank=memory_bank,
+                            match=match,
+                            bit_pointer=32 if memory_bank == 1 else 0,
+                            tag_mask=b'\xff' * len(tag_data),  # Full match mask
+                            tag_data=tag_data
+                        )
+                        
+                        # Create tag spec
+                        tag_spec_param = C1G2TagSpec(target=4)  # SL (Selected)
+                        tag_spec_param.c1g2_target_tag.append(target_tag)
+                        
+                        # Add as custom parameter (simplified implementation)
+                        c1g2_inventory.custom_parameters.append(tag_spec_param)
+                        
+                    except ValueError:
+                        logger.warning(f"Invalid hex EPC: {epc_hex}")
+        
+        # Add to AISpec
+        if rospec.spec_parameters:
+            aispec = rospec.spec_parameters[0]
+            if aispec.inventory_parameter_specs:
+                inv_param = aispec.inventory_parameter_specs[0]
+                inv_param.antenna_configuration = c1g2_inventory
+        
+        logger.info(f"Created selective ROSpec {rospec_id}: {len(target_tags or [])} target tags")
+        return rospec
+    
+    def start_filtered_inventory(self, epc_filter: str = "",
+                                memory_bank: int = 1,
+                                duration_seconds: float = 5.0,
+                                antenna_ids: List[int] = None,
+                                tag_callback: Callable = None,
+                                state_aware: bool = False) -> List[Dict]:
+        """
+        Start inventory with EPC Gen2 filtering
+        
+        Args:
+            epc_filter: EPC pattern to filter (hex string)
+            memory_bank: Memory bank for filter
+            duration_seconds: Inventory duration
+            antenna_ids: Antenna IDs
+            tag_callback: Tag callback function
+            state_aware: Use state-aware inventory
+            
+        Returns:
+            List of filtered tags
+        """
+        # Set callback
+        if tag_callback:
+            self.tag_callback = tag_callback
+        
+        # Clear existing ROSpecs
+        self.clear_rospecs()
+        
+        # Create filtered ROSpec
+        rospec = self.create_filtered_rospec(
+            rospec_id=791,
+            epc_filter=epc_filter,
+            memory_bank=memory_bank,
+            duration_seconds=duration_seconds,
+            antenna_ids=antenna_ids,
+            state_aware=state_aware
+        )
+        
+        # Execute inventory
+        if self.add_rospec(rospec):
+            if self.enable_rospec(791):
+                logger.info(f"Started filtered inventory: filter='{epc_filter}'")
+                
+                # Wait for completion
+                time.sleep(duration_seconds + 0.5)
+                
+                # Stop and clean up
+                self.stop_rospec(791)
+                self.clear_rospecs()
+                
+                # Return collected tags
+                with self.tags_lock:
+                    return self.tags_read.copy()
+        
+        return []
+    
+    def start_selective_inventory(self, target_tags: List[Dict],
+                                 duration_seconds: float = 5.0,
+                                 antenna_ids: List[int] = None,
+                                 tag_callback: Callable = None) -> List[Dict]:
+        """
+        Start inventory targeting specific tags
+        
+        Args:
+            target_tags: List of target tag specifications
+            duration_seconds: Inventory duration
+            antenna_ids: Antenna IDs
+            tag_callback: Tag callback function
+            
+        Returns:
+            List of targeted tags
+        """
+        # Set callback
+        if tag_callback:
+            self.tag_callback = tag_callback
+        
+        # Clear existing ROSpecs
+        self.clear_rospecs()
+        
+        # Create selective ROSpec
+        rospec = self.create_selective_rospec(
+            rospec_id=792,
+            target_tags=target_tags,
+            duration_seconds=duration_seconds,
+            antenna_ids=antenna_ids
+        )
+        
+        # Execute inventory
+        if self.add_rospec(rospec):
+            if self.enable_rospec(792):
+                logger.info(f"Started selective inventory: {len(target_tags)} targets")
+                
+                # Wait for completion
+                time.sleep(duration_seconds + 0.5)
+                
+                # Stop and clean up
+                self.stop_rospec(792)
+                self.clear_rospecs()
+                
+                # Return collected tags
+                with self.tags_lock:
+                    return self.tags_read.copy()
+        
+        return []
+    
+    def configure_gen2_settings(self, session: int = 0, 
+                               tag_population: int = 32,
+                               mode_index: int = 0,
+                               tari: int = 0) -> bool:
+        """
+        Configure EPC Gen2 protocol settings
+        
+        Args:
+            session: Gen2 session number (0-3)
+            tag_population: Expected tag population
+            mode_index: RF mode index from reader capabilities
+            tari: Tari value in nanoseconds
+            
+        Returns:
+            True if configured successfully
+        """
+        # Store settings for future ROSpec creation
+        self._gen2_session = session
+        self._gen2_tag_population = tag_population  
+        self._gen2_mode_index = mode_index
+        self._gen2_tari = tari
+        
+        logger.info(f"Gen2 settings: session={session}, population={tag_population}, mode={mode_index}")
+        return True
+    
+    def find_tags_with_epc_pattern(self, epc_pattern: str,
+                                  memory_bank: int = 1,
+                                  duration_seconds: float = 10.0) -> List[Dict]:
+        """
+        Find tags matching EPC pattern
+        
+        Args:
+            epc_pattern: Partial EPC pattern (hex string)
+            memory_bank: Memory bank to search
+            duration_seconds: Search duration
+            
+        Returns:
+            List of matching tags
+        """
+        return self.start_filtered_inventory(
+            epc_filter=epc_pattern,
+            memory_bank=memory_bank,
+            duration_seconds=duration_seconds
+        )
+    
+    def count_tags_by_tid_manufacturer(self, duration_seconds: float = 5.0) -> Dict[str, int]:
+        """
+        Count tags by TID manufacturer
+        
+        Args:
+            duration_seconds: Inventory duration
+            
+        Returns:
+            Dictionary mapping manufacturer to count
+        """
+        # Get all tags with TID reading
+        tags = self.start_filtered_inventory(
+            epc_filter="",  # No filter
+            memory_bank=2,  # TID memory
+            duration_seconds=duration_seconds
+        )
+        
+        manufacturer_counts = {}
+        
+        for tag in tags:
+            # Extract manufacturer from TID (simplified)
+            tid_hex = tag.get('tid', '')
+            if len(tid_hex) >= 4:
+                # First 2 bytes typically contain manufacturer info
+                manufacturer = tid_hex[:4]
+                manufacturer_counts[manufacturer] = manufacturer_counts.get(manufacturer, 0) + 1
+        
+        return manufacturer_counts
+    
+    # EPC Gen2 Advanced Methods
+    
+    def create_filtered_rospec(self, rospec_id: int = None,
+                              epc_filter: str = "",
+                              memory_bank: int = 1,
+                              duration_seconds: float = 5.0,
+                              antenna_ids: List[int] = None,
+                              state_aware: bool = False,
+                              session: int = 0) -> ROSpec:
+        """
+        Create a ROSpec with EPC Gen2 filtering
+        
+        Args:
+            rospec_id: ROSpec ID (auto-assigned if None)
+            epc_filter: EPC pattern to filter (hex string)
+            memory_bank: Memory bank for filter (1=EPC, 2=TID, 3=User)
+            duration_seconds: Inventory duration
+            antenna_ids: List of antenna IDs
+            state_aware: Use state-aware inventory
+            session: Gen2 session number (0-3)
+            
+        Returns:
+            ROSpec with C1G2 filtering
+        """
+        from .c1g2_parameters import (
+            C1G2InventoryCommand, C1G2Filter, C1G2SingulationControl,
+            C1G2TagInventoryStateAware
+        )
+        
+        if rospec_id is None:
+            rospec_id = self.current_rospec_id
+            self.current_rospec_id += 1
+        
+        # Create basic ROSpec
+        rospec = self.create_basic_rospec(
+            rospec_id=rospec_id,
+            duration_ms=int(duration_seconds * 1000),
+            antenna_ids=antenna_ids,
+            report_every_n_tags=1,
+            start_immediate=True
+        )
+        
+        # Create C1G2 inventory command
+        c1g2_inventory = C1G2InventoryCommand()
+        c1g2_inventory.tag_inventory_state_aware = state_aware
+        
+        # Add EPC filter if specified
+        if epc_filter:
+            # Convert hex string to bytes
+            try:
+                filter_data = bytes.fromhex(epc_filter.replace(' ', ''))
+                bit_length = len(filter_data) * 8
+                
+                epc_filter_param = C1G2Filter(
+                    filter_type=3,  # Memory_Bank_Filter
+                    memory_bank=memory_bank,
+                    bit_pointer=32 if memory_bank == 1 else 0,  # Skip PC+CRC for EPC
+                    bit_length=bit_length,
+                    filter_data=filter_data
+                )
+                c1g2_inventory.c1g2_filter.append(epc_filter_param)
+                
+            except ValueError:
+                logger.warning(f"Invalid hex EPC filter: {epc_filter}")
+        
+        # Add singulation control
+        singulation_control = C1G2SingulationControl(
+            session=session,
+            tag_population=32,
+            tag_transit_time=0
+        )
+        
+        if state_aware:
+            state_aware_param = C1G2TagInventoryStateAware(
+                tag_state=0,  # State A
+                session=session
+            )
+            singulation_control.c1g2_tag_inventory_state_aware = state_aware_param
+        
+        c1g2_inventory.c1g2_singulation_control = singulation_control
+        
+        # Add to AISpec
+        if rospec.spec_parameters:
+            aispec = rospec.spec_parameters[0]
+            if aispec.inventory_parameter_specs:
+                inv_param = aispec.inventory_parameter_specs[0]
+                inv_param.antenna_configuration = c1g2_inventory
+        
+        logger.info(f"Created filtered ROSpec {rospec_id}: filter='{epc_filter}', bank={memory_bank}")
+        return rospec
+    
+    def create_selective_rospec(self, rospec_id: int = None,
+                               target_tags: List[Dict] = None,
+                               duration_seconds: float = 5.0,
+                               antenna_ids: List[int] = None) -> ROSpec:
+        """
+        Create ROSpec that selectively targets specific tags
+        
+        Args:
+            rospec_id: ROSpec ID
+            target_tags: List of target tag specifications
+                        [{'epc': 'hex_string', 'memory_bank': 1, 'match': True}, ...]
+            duration_seconds: Inventory duration
+            antenna_ids: Antenna IDs
+            
+        Returns:
+            ROSpec with selective targeting
+        """
+        from .c1g2_parameters import C1G2InventoryCommand, C1G2TagSpec, C1G2TargetTag
+        
+        if rospec_id is None:
+            rospec_id = self.current_rospec_id
+            self.current_rospec_id += 1
+        
+        # Create basic ROSpec
+        rospec = self.create_basic_rospec(
+            rospec_id=rospec_id,
+            duration_ms=int(duration_seconds * 1000),
+            antenna_ids=antenna_ids,
+            report_every_n_tags=1,
+            start_immediate=True
+        )
+        
+        # Create C1G2 inventory command with tag targeting
+        c1g2_inventory = C1G2InventoryCommand()
+        
+        if target_tags:
+            for tag_spec in target_tags:
+                epc_hex = tag_spec.get('epc', '')
+                memory_bank = tag_spec.get('memory_bank', 1)
+                match = tag_spec.get('match', True)
+                
+                if epc_hex:
+                    try:
+                        tag_data = bytes.fromhex(epc_hex.replace(' ', ''))
+                        
+                        # Create target tag
+                        target_tag = C1G2TargetTag(
+                            memory_bank=memory_bank,
+                            match=match,
+                            bit_pointer=32 if memory_bank == 1 else 0,
+                            tag_mask=b'\xff' * len(tag_data),  # Full match mask
+                            tag_data=tag_data
+                        )
+                        
+                        # Create tag spec
+                        tag_spec_param = C1G2TagSpec(target=4)  # SL (Selected)
+                        tag_spec_param.c1g2_target_tag.append(target_tag)
+                        
+                        # Add as custom parameter (simplified implementation)
+                        c1g2_inventory.custom_parameters.append(tag_spec_param)
+                        
+                    except ValueError:
+                        logger.warning(f"Invalid hex EPC: {epc_hex}")
+        
+        # Add to AISpec
+        if rospec.spec_parameters:
+            aispec = rospec.spec_parameters[0]
+            if aispec.inventory_parameter_specs:
+                inv_param = aispec.inventory_parameter_specs[0]
+                inv_param.antenna_configuration = c1g2_inventory
+        
+        logger.info(f"Created selective ROSpec {rospec_id}: {len(target_tags or [])} target tags")
+        return rospec
+    
+    def start_filtered_inventory(self, epc_filter: str = "",
+                                memory_bank: int = 1,
+                                duration_seconds: float = 5.0,
+                                antenna_ids: List[int] = None,
+                                tag_callback: Callable = None,
+                                state_aware: bool = False) -> List[Dict]:
+        """
+        Start inventory with EPC Gen2 filtering
+        
+        Args:
+            epc_filter: EPC pattern to filter (hex string)
+            memory_bank: Memory bank for filter
+            duration_seconds: Inventory duration
+            antenna_ids: Antenna IDs
+            tag_callback: Tag callback function
+            state_aware: Use state-aware inventory
+            
+        Returns:
+            List of filtered tags
+        """
+        # Set callback
+        if tag_callback:
+            self.tag_callback = tag_callback
+        
+        # Clear existing ROSpecs
+        self.clear_rospecs()
+        
+        # Create filtered ROSpec
+        rospec = self.create_filtered_rospec(
+            rospec_id=791,
+            epc_filter=epc_filter,
+            memory_bank=memory_bank,
+            duration_seconds=duration_seconds,
+            antenna_ids=antenna_ids,
+            state_aware=state_aware
+        )
+        
+        # Execute inventory
+        if self.add_rospec(rospec):
+            if self.enable_rospec(791):
+                logger.info(f"Started filtered inventory: filter='{epc_filter}'")
+                
+                # Wait for completion
+                time.sleep(duration_seconds + 0.5)
+                
+                # Stop and clean up
+                self.stop_rospec(791)
+                self.clear_rospecs()
+                
+                # Return collected tags
+                with self.tags_lock:
+                    return self.tags_read.copy()
+        
+        return []
+    
+    def start_selective_inventory(self, target_tags: List[Dict],
+                                 duration_seconds: float = 5.0,
+                                 antenna_ids: List[int] = None,
+                                 tag_callback: Callable = None) -> List[Dict]:
+        """
+        Start inventory targeting specific tags
+        
+        Args:
+            target_tags: List of target tag specifications
+            duration_seconds: Inventory duration
+            antenna_ids: Antenna IDs
+            tag_callback: Tag callback function
+            
+        Returns:
+            List of targeted tags
+        """
+        # Set callback
+        if tag_callback:
+            self.tag_callback = tag_callback
+        
+        # Clear existing ROSpecs
+        self.clear_rospecs()
+        
+        # Create selective ROSpec
+        rospec = self.create_selective_rospec(
+            rospec_id=792,
+            target_tags=target_tags,
+            duration_seconds=duration_seconds,
+            antenna_ids=antenna_ids
+        )
+        
+        # Execute inventory
+        if self.add_rospec(rospec):
+            if self.enable_rospec(792):
+                logger.info(f"Started selective inventory: {len(target_tags)} targets")
+                
+                # Wait for completion
+                time.sleep(duration_seconds + 0.5)
+                
+                # Stop and clean up
+                self.stop_rospec(792)
+                self.clear_rospecs()
+                
+                # Return collected tags
+                with self.tags_lock:
+                    return self.tags_read.copy()
+        
+        return []
+    
+    def configure_gen2_settings(self, session: int = 0, 
+                               tag_population: int = 32,
+                               mode_index: int = 0,
+                               tari: int = 0) -> bool:
+        """
+        Configure EPC Gen2 protocol settings
+        
+        Args:
+            session: Gen2 session number (0-3)
+            tag_population: Expected tag population
+            mode_index: RF mode index from reader capabilities
+            tari: Tari value in nanoseconds
+            
+        Returns:
+            True if configured successfully
+        """
+        # Store settings for future ROSpec creation
+        self._gen2_session = session
+        self._gen2_tag_population = tag_population  
+        self._gen2_mode_index = mode_index
+        self._gen2_tari = tari
+        
+        logger.info(f"Gen2 settings: session={session}, population={tag_population}, mode={mode_index}")
+        return True
+    
+    def find_tags_with_epc_pattern(self, epc_pattern: str,
+                                  memory_bank: int = 1,
+                                  duration_seconds: float = 10.0) -> List[Dict]:
+        """
+        Find tags matching EPC pattern
+        
+        Args:
+            epc_pattern: Partial EPC pattern (hex string)
+            memory_bank: Memory bank to search
+            duration_seconds: Search duration
+            
+        Returns:
+            List of matching tags
+        """
+        return self.start_filtered_inventory(
+            epc_filter=epc_pattern,
+            memory_bank=memory_bank,
+            duration_seconds=duration_seconds
+        )
+    
+    def count_tags_by_tid_manufacturer(self, duration_seconds: float = 5.0) -> Dict[str, int]:
+        """
+        Count tags by TID manufacturer
+        
+        Args:
+            duration_seconds: Inventory duration
+            
+        Returns:
+            Dictionary mapping manufacturer to count
+        """
+        # Get all tags with TID reading
+        tags = self.start_filtered_inventory(
+            epc_filter="",  # No filter
+            memory_bank=2,  # TID memory
+            duration_seconds=duration_seconds
+        )
+        
+        manufacturer_counts = {}
+        
+        for tag in tags:
+            # Extract manufacturer from TID (simplified)
+            tid_hex = tag.get('tid', '')
+            if len(tid_hex) >= 4:
+                # First 2 bytes typically contain manufacturer info
+                manufacturer = tid_hex[:4]
+                manufacturer_counts[manufacturer] = manufacturer_counts.get(manufacturer, 0) + 1
+        
+        return manufacturer_counts
     
     # EPC Gen2 Advanced Methods
     
@@ -4639,6 +4634,9 @@ class LLRPClient:
             else:
                 logger.error("Failed to enable events and reports")
                 return False
+        except Exception as e:
+            logger.error(f"Error enabling events: {e}")
+            return False
     
     # EPC Gen2 Advanced Methods
     
@@ -4982,10 +4980,6 @@ class LLRPClient:
                 manufacturer_counts[manufacturer] = manufacturer_counts.get(manufacturer, 0) + 1
         
         return manufacturer_counts
-                
-        except Exception as e:
-            logger.error(f"Error enabling events and reports: {e}")
-            return False
     
     # EPC Gen2 Advanced Methods
     
@@ -5818,7 +5812,6 @@ class LLRPClient:
                 manufacturer_counts[manufacturer] = manufacturer_counts.get(manufacturer, 0) + 1
         
         return manufacturer_counts
-            return False
     
     # EPC Gen2 Advanced Methods
     
@@ -7229,7 +7222,6 @@ class LLRPClient:
                 manufacturer_counts[manufacturer] = manufacturer_counts.get(manufacturer, 0) + 1
         
         return manufacturer_counts
-            return False
     
     # EPC Gen2 Advanced Methods
     
@@ -8640,7 +8632,6 @@ class LLRPClient:
                 manufacturer_counts[manufacturer] = manufacturer_counts.get(manufacturer, 0) + 1
         
         return manufacturer_counts
-            return False
     
     # EPC Gen2 Advanced Methods
     
@@ -10054,7 +10045,6 @@ class LLRPClient:
                 manufacturer_counts[manufacturer] = manufacturer_counts.get(manufacturer, 0) + 1
         
         return manufacturer_counts
-            return False
     
     # EPC Gen2 Advanced Methods
     
