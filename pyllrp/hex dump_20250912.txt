@@ -2,10 +2,10 @@ reader event notification
 04 3f 00 00 00 20 00 00 00 00 00 f6 00 16 00 80
 00 0c 00 06 3e 90 aa b9 cc e0 01 00 00 06 00 00
 
-get reader capavilities
+get reader capabilities
 04 01 00 00 00 0b 00 00 00 01 00
 
-get reader capavilities response
+get reader capabilities response
 04 0b 00 00 06 f3 00 00 00 01 01 1f 00 08 00 00
 00 00 00 89 01 c0 00 08 40 00 00 00 65 1a 00 1e
 88 6a 00 0e 46 52 39 30 30 2d 32 30 32 35 30 32
