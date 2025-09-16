@@ -1,0 +1,9 @@
+D:\work\GitFork\LLRP_Toolkit\bluebird\BlueBirdReaderConsole\obj\Debug\BlueBirdReaderConsole.csproj.AssemblyReference.cache
+D:\work\GitFork\LLRP_Toolkit\bluebird\BlueBirdReaderConsole\obj\Debug\BlueBirdReaderConsole.csproj.CoreCompileInputs.cache
+D:\work\GitFork\LLRP_Toolkit\bluebird\BlueBirdReaderConsole\bin\Debug\BlueBirdReaderConsole.exe
+D:\work\GitFork\LLRP_Toolkit\bluebird\BlueBirdReaderConsole\bin\Debug\BlueBirdReaderConsole.pdb
+D:\work\GitFork\LLRP_Toolkit\bluebird\BlueBirdReaderConsole\bin\Debug\Bluebird.FixedReader.dll
+D:\work\GitFork\LLRP_Toolkit\bluebird\BlueBirdReaderConsole\bin\Debug\LLRP.dll
+D:\work\GitFork\LLRP_Toolkit\bluebird\BlueBirdReaderConsole\obj\Debug\BlueBird.040335C2.Up2Date
+D:\work\GitFork\LLRP_Toolkit\bluebird\BlueBirdReaderConsole\obj\Debug\BlueBirdReaderConsole.exe
+D:\work\GitFork\LLRP_Toolkit\bluebird\BlueBirdReaderConsole\obj\Debug\BlueBirdReaderConsole.pdb

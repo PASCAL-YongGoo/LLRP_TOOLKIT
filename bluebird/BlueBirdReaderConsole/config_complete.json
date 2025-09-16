@@ -1,0 +1,220 @@
+{
+  "connection": {
+    "hostname": "192.168.10.106",
+    "inventoryDurationMs": 60000,
+    "connectionTimeoutMs": 30000,
+    "keepalive": {
+      "enabled": true,
+      "periodInMs": 10000,
+      "timeoutMs": 15000
+    }
+  },
+  "antennas": {
+    "isAutoDetect": false,
+    "autoDetectPower": 30.0,
+    "maxRxSensitivity": true,
+    "rxSensitivity": -70.0,
+    "ports": {
+      "antenna1": {
+        "isEnabled": true,
+        "maxTxPower": false,
+        "txPower": 30.0
+      },
+      "antenna2": {
+        "isEnabled": false,
+        "maxTxPower": false,
+        "txPower": 30.0
+      },
+      "antenna3": {
+        "isEnabled": false,
+        "maxTxPower": false,
+        "txPower": 30.0
+      },
+      "antenna4": {
+        "isEnabled": false,
+        "maxTxPower": false,
+        "txPower": 30.0
+      },
+      "antenna5": {
+        "isEnabled": false,
+        "maxTxPower": false,
+        "txPower": 30.0
+      },
+      "antenna6": {
+        "isEnabled": false,
+        "maxTxPower": false,
+        "txPower": 30.0
+      },
+      "antenna7": {
+        "isEnabled": false,
+        "maxTxPower": false,
+        "txPower": 30.0
+      },
+      "antenna8": {
+        "isEnabled": false,
+        "maxTxPower": false,
+        "txPower": 30.0
+      }
+    }
+  },
+  "readerMode": {
+    "modeIndex": 1,
+    "modeNames": ["Mode 0", "Mode 1", "Mode 2", "Mode 3"],
+    "session": 0,
+    "sessionNames": ["Session 0", "Session 1", "Session 2", "Session 3"],
+    "tagPopulationEstimate": 30
+  },
+  "report": {
+    "includeAntennaPortNumber": true,
+    "includePeakRssi": true,
+    "includePcBits": true,
+    "includeTID": false,
+    "includeFirstTimeStamp": true,
+    "includeLastTimeStamp": false
+  },
+  "filters": {
+    "mode": "None",
+    "modeOptions": ["None", "OnlyFilter1"],
+    "tagFilter": {
+      "memoryBank": "Epc",
+      "memoryBankOptions": ["Reserved", "Epc", "TID", "User"],
+      "bitPointer": 32,
+      "tagMask": "",
+      "bitCount": 0
+    }
+  },
+  "autoStart": {
+    "mode": "None",
+    "modeOptions": ["None", "GpiTrigger", "Periodic"],
+    "gpiPortNumber": 1,
+    "gpiLevel": true,
+    "periodInMs": 10000
+  },
+  "autoStop": {
+    "mode": "None",
+    "modeOptions": ["None", "GpiTrigger", "Duration"],
+    "gpiPortNumber": 1,
+    "gpiLevel": false,
+    "durationInMs": 10000
+  },
+  "gpis": {
+    "gpi1": {
+      "portNumber": 1,
+      "isEnabled": true
+    },
+    "gpi2": {
+      "portNumber": 2,
+      "isEnabled": false
+    },
+    "gpi3": {
+      "portNumber": 3,
+      "isEnabled": false
+    },
+    "gpi4": {
+      "portNumber": 4,
+      "isEnabled": false
+    }
+  },
+  "scenario": {
+    "type": "Continuous",
+    "typeOptions": ["Continuous", "Timed", "GPI"],
+    "runTime": 10,
+    "onTimeSeconds": 10,
+    "offTimeSeconds": 10,
+    "maxRuns": 1
+  },
+  "memoryAccess": {
+    "defaultAccessPassword": "0",
+    "memoryBanks": ["Reserved", "Epc", "TID", "User"],
+    "defaultWordCount": 1,
+    "defaultWordOffset": 0,
+    "bitPointers": {
+      "epc": 32,
+      "tid": 0,
+      "user": 0,
+      "reserved": 0
+    }
+  },
+  "ui": {
+    "enableBeep": false,
+    "enableFiltering": true,
+    "statisticsUpdateIntervalMs": 1000,
+    "listUpdateBatchSize": 200,
+    "threadSleepMs": 200
+  },
+  "operationModes": {
+    "tagOperation": {
+      "forceSession1": true,
+      "forceMode1": true,
+      "timeoutMs": 5000
+    },
+    "normalInventory": {
+      "useConfiguredSettings": true
+    },
+    "writeEpc": {
+      "timeoutMs": 5000,
+      "retryCount": 3
+    },
+    "memoryRead": {
+      "timeoutMs": 5000,
+      "retryCount": 3
+    },
+    "memoryWrite": {
+      "timeoutMs": 5000,
+      "retryCount": 3
+    }
+  },
+  "performance": {
+    "enableKeepAliveTimer": true,
+    "keepAliveTimeoutMs": 15000,
+    "threadSleepMs": 200,
+    "listViewOptimization": true,
+    "batchUpdateSize": 50
+  },
+  "messages": {
+    "connectionSuccess": "Connected successfully!",
+    "connectionFailed": "Unable to connect to specified reader in specified time period.",
+    "disconnected": "Disconnected",
+    "inventoryStarted": "Starting inventory...",
+    "inventoryCompleted": "Inventory completed",
+    "settingsApplied": "Reader settings configured!",
+    "writeSuccess": "Write operation successful",
+    "writeFailed": "Write operation failed",
+    "readSuccess": "Read operation successful",
+    "readFailed": "Read operation failed",
+    "timeout": "Operation timeout",
+    "noTagsDetected": "No tags detected during inventory",
+    "possibleCauses": [
+      "No RFID tags in antenna range",
+      "Tags not EPC Gen2 compatible",
+      "Antenna connection issues",
+      "RF interference"
+    ]
+  },
+  "logging": {
+    "enableConsoleLogging": true,
+    "enableFileLogging": false,
+    "logLevel": "Info",
+    "logLevels": ["Debug", "Info", "Warning", "Error"],
+    "logFilePath": "rfid_reader.log",
+    "maxLogFileSize": 10485760,
+    "keepLogDays": 7
+  },
+  "export": {
+    "enableCsvExport": true,
+    "enableXmlExport": false,
+    "defaultExportPath": "exports",
+    "includeTimestamp": true,
+    "csvDelimiter": ",",
+    "dateFormat": "yyyy-MM-dd HH:mm:ss"
+  },
+  "validation": {
+    "validateIpAddress": true,
+    "validatePowerRange": true,
+    "powerMinValue": 0.0,
+    "powerMaxValue": 32.5,
+    "validateSessionRange": true,
+    "sessionMinValue": 0,
+    "sessionMaxValue": 3
+  }
+}
